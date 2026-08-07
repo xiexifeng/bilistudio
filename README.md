@@ -1,6 +1,6 @@
 # BiliStudio — 个人B站内容聚合收藏站
 
-面向小学生家长的少儿教育版 B站内容站，聚合科普/数学/英语/语文等教育视频，支持搜索、收藏、播放、UP主追踪，扫码登录后可同步 B站个人收藏夹、关注列表和观看历史。
+面向小学生家长的少儿教育版，聚合 B站教育/科普/知识类视频，支持搜索、收藏、播放、UP主追踪、合集浏览。扫码登录后可同步 B站个人收藏夹、关注列表和观看历史。
 
 ## 功能总览
 
@@ -10,34 +10,35 @@
 | 🔍 B站搜索 | 搜索 B站全站视频，**自动过滤广告/推广/营销号** |
 | 🎯 分类快捷搜索 | 预习小学数学、英语启蒙、古诗作文、科学实验、编程入门等 10 个分类 |
 | 🏠 精选 UP主 | 14 位教育 UP主预览（数学林老师、学而思、英语兔、无穷小亮、李永乐等） |
-| 🏆 排行榜 | （待开发） |
 
 ### 播放 & 收藏
 | 功能 | 说明 |
 |---|---|
-| ▶️ 视频播放 | iframe 嵌入 B站官方播放器，支持弹幕 |
-| 📺 画中画（浮动播放器） | **离开播放页自动缩小为右下角浮动窗口**，视频不中断。可收起/展开/关闭，点击标题回到全屏 |
+| ▶️ 视频播放 | iframe 嵌入 B站官方播放器，支持弹幕，默认有声音（`autoplay=0, muted=0`） |
+| 📚 合集 & 多P 选集 | 视频详情页右侧自动显示合集列表或多P选集，点击直接切换，**不刷新页面** |
+| 📺 画中画（浮动播放器） | 离开播放页自动缩小为右下角浮动窗口，视频不中断。可收起/展开/关闭，点击标题回到全屏 |
 | ⭐ 本地收藏 | 一键收藏到本地 SQLite，支持按 UP主筛选/关键词搜索/删除 |
 | 📤 导出/导入 | JSON 格式备份收藏，按 bvid 自动去重 |
 
 ### B站账号集成
 | 功能 | 说明 |
 |---|---|
-| 📱 扫码登录 | B站 App 扫码登录，cookie 本地持久化 |
-| 👤 UP主追踪 | 查看 UP主全部视频，按发布时间排序 |
+| 📱 扫码登录 | B站 App 扫码登录，cookie 本地持久化。session 自动检测登录态变化 |
+| 👤 UP主追踪 | 查看 UP主全部视频，按发布时间排序，WBI 签名接口 + 动态指纹 + bili_ticket 鉴权 |
 | 📂 B站收藏夹同步 | 登录后查看 B站收藏夹内容，可一键转存到本地 |
 | 📋 关注列表 | 查看 B站关注的 UP主 |
 | 📜 历史记录 | 查看 B站观看历史 |
 
-### 防限流系统
+### 防限流系统（7层防护）
 | 层 | 策略 |
 |---|---|
 | 前端请求队列 | 同一时间只允许 1 个 B站请求在飞，间隔 ≥800ms |
-| 后端全局节流 | 两次请求最小间隔 1s |
-| TTL 内存缓存 | 搜索结果缓存 60s，视频详情 60s，-799 风控错误也缓存（冷却标记） |
-| 指数退避重试 | 遇到 -799 自动等待 2→4→8 秒重试 3 次 |
-| WBI 签名备选 | UP主视频支持切到 WBI 签名接口 |
-| 图片代理缓存 | 图片代理带 `Cache-Control: max-age=3600`，后端内存 LRU 缓存 |
+| 后端全局节流 | 两次请求最小间隔 1s，_fetch_wbi_keys 也纳入节流 |
+| 全局熔断器 | 遇到 -799 自动 60s 冷却，所有 B站请求暂停 |
+| 动态浏览器指纹 | `dm_img_str`、`dm_cover_img_str` 等参数每次请求随机生成 |
+| bili_ticket JWT 鉴权 | 自动获取 B站新鉴权 token，提前 1h 刷新 |
+| WBI 签名 + 接口参数修正 | 空间页使用正确的 `web_location`，Sec-CH-UA 头模拟 Chrome |
+| TTL 内存缓存 | 搜索结果 60s，视频详情 60s，合集数据也在 view 接口响应中一并缓存 |
 
 ## 技术栈
 
@@ -63,14 +64,14 @@ bilistudio/
 │   ├── config.py                # Pydantic Settings 配置
 │   ├── database.py              # 数据库引擎（SQLite/MySQL）
 │   ├── models.py                # SQLAlchemy ORM 模型
-│   ├── schemas.py               # Pydantic 请求/响应模型
+│   ├── schemas.py               # Pydantic 请求/响应模型（含 BiliCollection/BiliCollectionItem）
 │   ├── main.py                  # FastAPI 入口
 │   ├── routers/
 │   │   ├── auth.py              # B站扫码登录
-│   │   ├── bilibili.py          # B站内容接口
+│   │   ├── bilibili.py          # B站内容接口（搜索/详情/UP主/合集/登录态内容）
 │   │   └── collection.py        # 本地收藏 CRUD
 │   └── utils/
-│       ├── bili_api.py          # B站 API 封装（风控/缓存/WBI/清洗）
+│       ├── bili_api.py          # B站 API 封装（7层风控/缓存/WBI签名/动态指纹/bili_ticket/合集/数据清洗）
 │       └── bili_auth.py         # 扫码登录管理器
 │
 └── frontend/                    # Vue 3
@@ -80,16 +81,16 @@ bilistudio/
     └── src/
         ├── main.js              # Vue 入口
         ├── App.vue              # 根组件（顶栏/登录/迷你播放器/Toast）
-        ├── api.js               # API 封装（请求队列/图片代理）
+        ├── api.js               # API 封装（请求队列/图片代理/合集接口）
         ├── curated.js           # 精选 UP主数据 & 快捷搜索分类
         ├── router/index.js      # Hash 路由
         ├── components/
         │   └── VideoCard.vue    # 视频卡片组件
         └── views/
             ├── Home.vue         # 首页（精选/搜索/分类）
-            ├── Player.vue       # 播放页（iframe/侧边收藏/画中画）
+            ├── Player.vue       # 播放页（iframe/合集&多P选集/侧边收藏/画中画）
             ├── Collection.vue   # 收藏页（本地/B站收藏夹）
-            └── User.vue         # UP主主页（信息/视频/双通道）
+            └── User.vue         # UP主主页（信息/视频列表）
 ```
 
 ## 开发环境启动
@@ -327,9 +328,9 @@ POST   /auth/logout              登出
 ```
 GET    /bilibili/search          ?keyword=&page=        搜索视频（自动过滤广告）
 GET    /bilibili/video/{bvid}    视频详情
+GET    /bilibili/video/{bvid}/collection  视频所属合集/多P选集
 GET    /bilibili/user/{mid}      UP主信息
 GET    /bilibili/user/{mid}/videos  ?page=&source=      UP主视频列表
-                                                  source=default|wbi
 ```
 
 ### B站个人内容（需登录）
@@ -368,6 +369,24 @@ POST   /api/config/rate         调整频率限制配置
 
 ---
 
+## 合集 & 多P 选集实现
+
+视频详情页右侧会自动显示合集列表或视频选集，无需额外 API 请求。
+
+**实现原理**：B站的合集信息嵌入在视频详情（`WBI view`）接口响应的 `data.ugc_season` 字段中，一次请求即可拿到合集中所有视频（含缩略图、时长）。多P视频的 `data.pages` 数组同理。
+
+| 类型 | 识别方式 | 实现 |
+|---|---|---|
+| UGC 合集 | `data.ugc_season` 存在且含 `id` | 提取 sections → episodes，生成合集列表。点击跳转路由 `/play/{bvid}` |
+| 多P 视频 | `data.pages` 长度 > 1 | 伪合集（`season_id=0`），点击直接切换 `currentPage`，**不刷新页面** |
+
+**后端**：`get_video_collection(bvid)` 在 `bili_api.py` → 路由 `GET /bilibili/video/{bvid}/collection`，view 接口响应有 60s TTL 缓存。
+**前端**：`Player.vue` 中 `loadCollection()` → `api.videoCollection(bvid)` → 渲染 `collection.videos` 列表。
+
+**同合集内切换**：检测新视频 BVID 是否在当前合集列表中，如果是则跳过合集刷新，只更新播放器 iframe。
+
+---
+
 ## 架构
 
 ```
@@ -391,16 +410,22 @@ POST   /api/config/rate         调整频率限制配置
 ## 常见问题
 
 ### Q: 搜索/UP主页面提示 "-799 请求过于频繁"
-A: 系统已内置自动退避重试，等几十秒再操作即可。如果频繁触发，调大 `.env` 中 `BILI_MIN_INTERVAL` 到 2~3 秒。UP主页面可切到 WBI 签名接口（右上角按钮）。
+A: 系统已内置 7 层防限流保护（全局熔断 60s + 动态指纹 + bili_ticket），通常几秒后自动恢复。如果频繁触发，调大 `.env` 中 `BILI_MIN_INTERVAL` 到 2~3 秒。
 
 ### Q: 视频封面图片不显示
 A: 图片都走后端代理了，检查后端 8000 端口是否正常。图片代理有内存缓存（1小时），首次访问稍慢。
+
+### Q: 播放器没声音
+A: B站嵌入播放器默认静音+自动播放。当前已固定参数 `autoplay=0&muted=0`，关闭自动播放后浏览器不会强制静音。如果仍然静音，刷新页面后手动点播放按钮。
+
+### Q: 合集列表不显示
+A: 并非所有视频都有合集。只有 UP主创建的 B站官方合集（ugc_season）或多P分集视频才会显示。合集数据从视频详情接口的 `ugc_season` 字段提取，一次请求即获取完整列表。
 
 ### Q: 扫码登录后看不到收藏夹
 A: 切换到"收藏"页面，点击顶部的"B站收藏夹"标签页。
 
 ### Q: 迷你播放器没声音/没画面
-A: 刷新页面重试。迷你播放器依赖完整 iframe DOM 不被销毁，首次使用或长时间闲置后可能需要重新进入播放页激活。
+A: 迷你播放器共享播放页的同一个 iframe（Teleport），声音状态一致。如出现异常，刷新页面重新进入播放页即可。
 
 ### Q: 如何备份数据
 A: 收藏页有"导出"按钮（JSON），同时建议定期备份 `backend/data.db` 和 `backend/.bili_cookies.json`。
@@ -410,6 +435,9 @@ A: 可以，但需注意：B站 Cookie 是全局的（一个账号登录所有�
 
 ### Q: 可以改端口吗
 A: 前端端口在 `vite.config.js` 的 `server.port`。后端端口在 `main.py` 的 `uvicorn.run(port=8000)` 和前端 `vite.config.js` 代理 target。同时需要更新 `main.py` 的 CORS `allow_origins`。
+
+### Q: 为什么点合集/多P 视频不刷新页面
+A: 这是设计行为。多P视频通过切换 `currentPage` 只更新播放器 iframe（同一个 BVID，不同 `p` 参数）。合集视频切换 BVID 时需要路由跳转，但如果新视频仍在当前合集中，会跳过合集列表的重新加载。目的是减少不必要的请求和页面闪烁。
 
 ---
 
