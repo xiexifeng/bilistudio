@@ -11,5 +11,5 @@ htmlcov/
 logs/
 *.log
 docker/.env
-nodemodules/
-dist/
+frontend/dist/
+frontend/node_modules/
