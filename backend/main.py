@@ -95,12 +95,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router, prefix="/api")
-app.include_router(bilibili.router, prefix="/api")
-app.include_router(collection.router, prefix="/api")
-app.include_router(users.router, prefix="/api")
-app.include_router(stats.router, prefix="/api")
-app.include_router(courses.router, prefix="/api")
+app.include_router(auth.router)
+app.include_router(bilibili.router)
+app.include_router(collection.router)
+app.include_router(users.router)
+app.include_router(stats.router)
+app.include_router(courses.router)
 
 # ===== 请求日志中间件 =====
 
