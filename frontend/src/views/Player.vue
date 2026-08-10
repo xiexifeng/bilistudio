@@ -7,8 +7,8 @@
           :src="embedUrl"
           frameborder="0"
           allowfullscreen
+          allow="autoplay; fullscreen"
           scrolling="no"
-          sandbox="allow-top-navigation allow-same-origin allow-forms allow-scripts allow-popups"
         ></iframe>
       </Teleport>
       <!-- 当 iframe 被传送到小窗时，占位保持页面布局 -->
@@ -29,7 +29,19 @@
           <button class="btn btn-primary" @click="addToCollection(detail)">
             {{ isCollected ? '✅ 已收藏' : '⭐ 收藏到本地' }}
           </button>
+          <button
+            v-if="nextEpisode"
+            class="btn btn-next"
+            @click="playNext"
+            :title="`下一集：${nextEpisode.title}`"
+          >
+            ▶ 播放下一集
+          </button>
           <a :href="`https://www.bilibili.com/video/${detail.bvid}`" target="_blank" class="btn btn-outline">在B站打开</a>
+        </div>
+
+        <div v-if="hasCollection && isLastEpisode" class="end-panel">
+          <span class="end-tip">✅ 这是合集的最后一集</span>
         </div>
       </div>
 
@@ -61,7 +73,7 @@
               <span class="col-meta">
                 <span v-if="v.section_title" class="col-section">[{{ v.section_title }}]</span>
                 <span v-if="v.play_count">▶ {{ formatNum(v.play_count) }}</span>
-                <span v-else>P{{ v.page }}</span>
+                <span v-else-if="v.page">P{{ v.page }}</span>
               </span>
             </div>
           </div>
@@ -119,10 +131,34 @@ const currentPage = ref(1)  // 当前多P视频的分页号
 // 判断是否为多P视频选集（season_id === 0 表示多P）
 const isMultiP = computed(() => collection.value?.season_id === 0)
 
+// 是否存在合集/选集
+const hasCollection = computed(() => !!collection.value?.videos?.length)
+
+// 下一集（合集/选集中的下一项）
+const nextEpisode = computed(() => {
+  if (!hasCollection.value) return null
+
+  if (isMultiP.value) {
+    const nextPage = currentPage.value + 1
+    const next = collection.value.videos.find(v => v.page === nextPage)
+    if (next) return { type: 'page', page: nextPage, bvid: props.bvid, title: next.title }
+    return null
+  }
+
+  // 合集视频：找到当前视频位置，返回下一项
+  const idx = collection.value.videos.findIndex(v => v.bvid === props.bvid)
+  if (idx < 0 || idx >= collection.value.videos.length - 1) return null
+  const n = collection.value.videos[idx + 1]
+  return { type: 'bvid', bvid: n.bvid, title: n.title }
+})
+
+// 是否已是最后一集
+const isLastEpisode = computed(() => hasCollection.value && nextEpisode.value === null)
+
 const embedUrl = computed(() => {
   if (!props.bvid) return ''
   const pageParam = currentPage.value > 1 ? `&p=${currentPage.value}` : ''
-  return `https://player.bilibili.com/player.html?bvid=${props.bvid}${pageParam}&high_quality=1&danmaku=1&autoplay=0&muted=0`
+  return `https://www.bilibili.com/blackboard/html5mobileplayer.html?bvid=${props.bvid}${pageParam}&danmaku=0&playsinline=1`
 })
 
 function formatNum(n) {
@@ -136,13 +172,27 @@ function goAuthor(mid) { if (mid) router.push(`/user/${mid}`) }
 // 切换合集/选集视频
 function switchCollectionItem(v) {
   if (isMultiP.value && v.page) {
-    // 多P视频：切换分页，不刷新页面
     currentPage.value = v.page
-    // 关闭小窗，新分页全屏播放
     if (closeMiniPlayer) closeMiniPlayer()
   } else if (v.bvid && v.bvid !== props.bvid) {
-    // 合集视频：路由跳转到新 BVID
     router.push(`/play/${v.bvid}`)
+  }
+}
+
+// 播放下一集
+function playNext() {
+  const next = nextEpisode.value
+  if (!next) {
+    showToast('✅ 已是最后一集')
+    return
+  }
+  showToast(`▶ 下一集: ${next.title}`)
+  if (closeMiniPlayer) closeMiniPlayer()
+
+  if (next.type === 'page') {
+    currentPage.value = next.page
+  } else {
+    router.push(`/play/${next.bvid}`)
   }
 }
 
@@ -161,29 +211,18 @@ async function addToCollection(video) {
 async function loadDetail(skipCollection = false) {
   loading.value = true
   if (!skipCollection) {
-    collection.value = null  // 切换视频时清空合集（仅非合集内切换时）
-    currentPage.value = 1    // 重置分页
+    collection.value = null
+    currentPage.value = 1
   }
   try {
     detail.value = await api.videoDetail(props.bvid)
+    if (!skipCollection) {
+      collection.value = detail.value?.collection || null
+    }
     const col = await api.listCollection({ keyword: props.bvid })
     isCollected.value = col.total > 0
-    // 加载合集列表（异步，不阻塞主流程；合集内切换时跳过）
-    if (!skipCollection) {
-      loadCollection()
-    }
   } catch (e) { showToast(e.message) }
   finally { loading.value = false }
-}
-
-async function loadCollection() {
-  try {
-    const res = await api.videoCollection(props.bvid)
-    collection.value = res?.collection || null
-  } catch (e) {
-    // 合集是可选的，失败不影响主流程
-    collection.value = null
-  }
 }
 
 async function loadMyCollection() {
@@ -193,7 +232,9 @@ async function loadMyCollection() {
   } catch (e) {}
 }
 
-onMounted(() => { loadDetail(); loadMyCollection() })
+onMounted(() => {
+  loadDetail(); loadMyCollection()
+})
 
 // 离开播放页（被 keep-alive 隐藏）时自动进入迷你播放器
 onDeactivated(() => {
@@ -210,9 +251,8 @@ onActivated(() => {
 // 切换视频（点击侧边栏其他视频或路由切换 BVID）时关闭小窗，新视频全屏播放
 watch(() => props.bvid, (newBvid, oldBvid) => {
   if (newBvid && newBvid !== oldBvid) {
-    currentPage.value = 1  // 切换视频时重置分页
+    currentPage.value = 1
     if (closeMiniPlayer) closeMiniPlayer()
-    // 如果新视频仍在当前合集中，保留合集列表不刷新
     const inCollection = collection.value?.videos?.some(v => v.bvid === newBvid)
     loadDetail(inCollection)
     loadMyCollection()
@@ -261,7 +301,7 @@ watch(() => props.bvid, (newBvid, oldBvid) => {
 }
 .video-meta .author:hover { background: #FFE0B2; }
 .video-desc { font-size: 14px; color: #64748B; line-height: 1.7; margin-bottom: 18px; white-space: pre-wrap; }
-.video-actions { display: flex; gap: 10px; }
+.video-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 .btn {
   padding: 10px 22px; border-radius: 10px; border: none;
   font-size: 14px; cursor: pointer; font-weight: 600; text-decoration: none;
@@ -272,6 +312,20 @@ watch(() => props.bvid, (newBvid, oldBvid) => {
 .btn-primary:hover { box-shadow: 0 4px 14px rgba(255,107,53,0.4); }
 .btn-outline { background: #fff; color: #FF6B35; border: 1.5px solid #FF6B35; }
 .btn-outline:hover { background: #FFF3E0; }
+.btn-next {
+  background: linear-gradient(135deg, #4A90E2, #6BB6FF); color: #fff;
+  box-shadow: 0 2px 8px rgba(74,144,226,0.25);
+}
+.btn-next:hover { box-shadow: 0 4px 14px rgba(74,144,226,0.4); }
+
+/* 最后一集提示 */
+.end-panel {
+  margin-top: 16px; padding: 14px 18px;
+  background: linear-gradient(135deg, #F0FDF4, #DCFCE7);
+  border: 1px solid #BBF7D0; border-radius: 12px;
+  text-align: center;
+}
+.end-tip { font-size: 13px; color: #16A34A; font-weight: 600; }
 
 /* 侧边栏 */
 .side-list { display: flex; flex-direction: column; gap: 8px; }

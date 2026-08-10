@@ -127,3 +127,75 @@ export const searchCategories = [
   { label: '💻 编程入门', query: '少儿编程 Scratch' },
   { label: '🎨 绘画手工', query: '绘画教程 手工' },
 ]
+
+/**
+ * 学习路线/课程定义
+ * 每条路线包含多个阶段，家长可以为每个阶段收藏视频并打卡
+ */
+export const learningPaths = [
+  {
+    id: 'math',
+    title: '🧮 数学启蒙',
+    desc: '从认数到四则运算，系统建立数学思维',
+    color: '#FF6B35',
+    bg: '#FFF3E0',
+    stages: [
+      { id: 'math-1', title: '认识数字', desc: '1-100 数数、读写、大小比较', search: '认识数字 数学启蒙' },
+      { id: 'math-2', title: '10以内加减', desc: '凑十法、破十法、口算练习', search: '10以内加减法 凑十法' },
+      { id: 'math-3', title: '20以内进退位', desc: '进位加法、退位减法', search: '20以内加减法 进退位' },
+      { id: 'math-4', title: '乘法口诀', desc: '理解乘法、背诵口诀、简单应用', search: '乘法口诀 小学数学' },
+      { id: 'math-5', title: '除法初步', desc: '平均分、表内除法、有余数除法', search: '除法 小学数学 讲解' },
+    ],
+  },
+  {
+    id: 'english',
+    title: '🐰 英语启蒙',
+    desc: '从字母到简单对话，快乐学英语',
+    color: '#45B7D1',
+    bg: '#E0F7FA',
+    stages: [
+      { id: 'eng-1', title: '字母与发音', desc: '26个字母认读、自然拼读入门', search: '英语字母 自然拼读 启蒙' },
+      { id: 'eng-2', title: '基础词汇', desc: '颜色、数字、动物、家庭成员', search: '英语基础词汇 小学 启蒙' },
+      { id: 'eng-3', title: '简单句型', desc: 'What/How/Can 开头的简单问答', search: '小学英语 简单句型 对话' },
+      { id: 'eng-4', title: '绘本阅读', desc: '英文绘本跟读、故事理解', search: '英文绘本 阅读 小学' },
+    ],
+  },
+  {
+    id: 'science',
+    title: '🧪 科学探索',
+    desc: '动手实验、观察自然、培养科学素养',
+    color: '#10B981',
+    bg: '#D1FAE5',
+    stages: [
+      { id: 'sci-1', title: '趣味物理实验', desc: '用日常物品做简单物理实验', search: '物理实验 趣味 简单' },
+      { id: 'sci-2', title: '化学小魔术', desc: '安全的家庭化学小实验', search: '化学实验 简单 安全' },
+      { id: 'sci-3', title: '生物与自然', desc: '认识动植物、了解生态系统', search: '科普 动物 植物 自然' },
+      { id: 'sci-4', title: '天文地理', desc: '太阳系、地球、天气现象', search: '天文 地理 科普 儿童' },
+    ],
+  },
+  {
+    id: 'code',
+    title: '💻 编程入门',
+    desc: '图形化编程起步，培养计算思维',
+    color: '#8B5CF6',
+    bg: '#EDE9FE',
+    stages: [
+      { id: 'code-1', title: 'Scratch初体验', desc: '认识界面、角色移动、简单动画', search: 'Scratch 入门 教程' },
+      { id: 'code-2', title: '事件与循环', desc: '点击事件、重复执行、条件判断', search: 'Scratch 条件 循环 讲解' },
+      { id: 'code-3', title: '做一个游戏', desc: '综合运用，完成一个完整小游戏', search: 'Scratch 游戏 制作 教程' },
+    ],
+  },
+  {
+    id: 'chinese',
+    title: '📜 语文素养',
+    desc: '古诗积累、作文入门、文化启蒙',
+    color: '#EC4899',
+    bg: '#FCE7F3',
+    stages: [
+      { id: 'cn-1', title: '古诗启蒙', desc: '唐诗宋词选读、诗词意境理解', search: '小学古诗 讲解 动画' },
+      { id: 'cn-2', title: '成语故事', desc: '常用成语的来源和用法', search: '成语故事 动画 儿童' },
+      { id: 'cn-3', title: '作文入门', desc: '看图写话、段落写作、日记', search: '小学作文 写作 方法' },
+      { id: 'cn-4', title: '阅读积累', desc: '名著导读、阅读方法、好词好句', search: '儿童阅读 名著 导读' },
+    ],
+  },
+]

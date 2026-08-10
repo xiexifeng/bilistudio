@@ -18,7 +18,15 @@
         <span class="dot-sep">·</span>
         <span v-if="video.play_count" class="play">▶ {{ formatNum(video.play_count) }}</span>
       </div>
-      <p v-if="video.note" class="note">{{ video.note }}</p>
+      <div v-if="video.note" class="note">{{ video.note }}</div>
+      <div v-if="showStatus && video.status" class="status-row">
+        <span class="status-tag" :class="'status-'+video.status" @click.stop="$emit('cycleStatus', video)">
+          {{ statusLabel(video.status) }}
+        </span>
+        <span v-if="video.watch_progress > 0 && video.watch_progress < 100" class="progress-text">
+          {{ video.watch_progress }}%
+        </span>
+      </div>
     </div>
   </div>
 </template>
@@ -27,16 +35,21 @@
 import { ref } from 'vue'
 import { proxyImage } from '../api.js'
 
-defineProps({
+const props = defineProps({
   video: Object,
   showDelete: Boolean,
   showCollect: Boolean,
+  showStatus: Boolean,
 })
-defineEmits(['click', 'delete', 'collect', 'author'])
+defineEmits(['click', 'delete', 'collect', 'author', 'cycleStatus'])
 const hasError = ref(false)
 function formatNum(n) {
   if (n >= 10000) return (n / 10000).toFixed(1) + '万'
   return String(n)
+}
+function statusLabel(s) {
+  const map = { todo: '待学习', in_progress: '学习中', done: '已完成' }
+  return map[s] || s
 }
 </script>
 
@@ -116,4 +129,20 @@ function formatNum(n) {
 .author:hover { background: #FFE0B2; }
 .dot-sep { color: #CBD5E1; }
 .note { margin-top: 6px; font-size: 12px; color: #94A3B8; font-style: italic; }
+
+/* 学习状态 */
+.status-row {
+  margin-top: 8px; display: flex; align-items: center; gap: 8px;
+}
+.status-tag {
+  padding: 3px 10px; border-radius: 8px; font-size: 11px;
+  font-weight: 600; cursor: pointer; transition: all .15s;
+}
+.status-todo { background: #F1F5F9; color: #64748B; }
+.status-todo:hover { background: #E2E8F0; }
+.status-in_progress { background: #EDE9FE; color: #8B5CF6; }
+.status-in_progress:hover { background: #DDD6FE; }
+.status-done { background: #D1FAE5; color: #10B981; }
+.status-done:hover { background: #A7F3D0; }
+.progress-text { font-size: 11px; color: #8B5CF6; font-weight: 600; }
 </style>

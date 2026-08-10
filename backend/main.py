@@ -3,9 +3,10 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 from database import engine, Base
 from pydantic import BaseModel
-from routers import bilibili, collection, auth
+from routers import bilibili, collection, auth, users, stats, courses
 from config import settings
 from utils.logger import setup_logging
 
@@ -13,11 +14,65 @@ from utils.logger import setup_logging
 setup_logging(log_file=settings.log_file, level=settings.log_level)
 logger = logging.getLogger("bilistudio")
 
+
+def _migrate_db():
+    """轻量级数据库迁移（适用于 SQLite 新增字段）"""
+    with engine.connect() as conn:
+        # 检查并添加 collection 表的新字段
+        result = conn.execute(text("PRAGMA table_info(collection)"))
+        cols = {row[1] for row in result}
+
+        if "user_id" not in cols:
+            conn.execute(text("ALTER TABLE collection ADD COLUMN user_id INTEGER DEFAULT 1"))
+            logger.info("迁移: collection 添加 user_id 列")
+        if "status" not in cols:
+            conn.execute(text("ALTER TABLE collection ADD COLUMN status VARCHAR(20) DEFAULT 'todo'"))
+            logger.info("迁移: collection 添加 status 列")
+        if "watch_progress" not in cols:
+            conn.execute(text("ALTER TABLE collection ADD COLUMN watch_progress INTEGER DEFAULT 0"))
+            logger.info("迁移: collection 添加 watch_progress 列")
+        conn.commit()
+
+        # 移除 bvid 的唯一约束（改为 user_id + bvid 组合唯一）
+        try:
+            indexes = conn.execute(text("PRAGMA index_list(collection)"))
+            for idx in indexes:
+                if idx[1] and "bvid" in idx[1]:
+                    # 尝试删除旧的唯一索引
+                    try:
+                        conn.execute(text(f"DROP INDEX IF EXISTS {idx[1]}"))
+                    except Exception:
+                        pass
+            conn.commit()
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: create tables
+    # Startup: create tables + migration
     Base.metadata.create_all(bind=engine)
-    logger.info("数据库表创建完成")
+    _migrate_db()
+
+    # 确保默认用户存在
+    from database import SessionLocal
+    from models import User as UserModel
+    import random
+    db = SessionLocal()
+    try:
+        user = db.query(UserModel).filter(UserModel.id == 1).first()
+        if not user:
+            _names = ["小明", "小方", "小华", "小美", "小丽", "小龙", "小虎", "小兔", "小星", "小月"]
+            _colors = ["#FF6B35", "#45B7D1", "#10B981", "#8B5CF6", "#F59E0B", "#EC4899", "#6366F1", "#14B8A6"]
+            user = UserModel(id=1, name=random.choice(_names), color=random.choice(_colors))
+            db.add(user)
+            db.commit()
+            logger.info(f"创建默认用户: {user.name}")
+    finally:
+        db.close()
+
+    logger.info("数据库初始化完成")
+
     # 预热 B站 session + WBI 密钥
     from utils.bili_api import init_bili
     init_bili()
@@ -27,7 +82,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="BiliStudio API",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -40,9 +95,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router)
-app.include_router(bilibili.router)
-app.include_router(collection.router)
+app.include_router(auth.router, prefix="/api")
+app.include_router(bilibili.router, prefix="/api")
+app.include_router(collection.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
+app.include_router(stats.router, prefix="/api")
+app.include_router(courses.router, prefix="/api")
 
 # ===== 请求日志中间件 =====
 

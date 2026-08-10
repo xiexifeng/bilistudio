@@ -17,9 +17,34 @@
       <nav class="nav">
         <router-link to="/">🏠 发现</router-link>
         <router-link to="/collection">⭐ 收藏</router-link>
+        <router-link to="/courses">📖 课程</router-link>
+        <router-link to="/stats">📊 统计</router-link>
       </nav>
 
       <div class="actions">
+        <!-- 用户切换器 -->
+        <div class="user-switcher" @click.stop="showUsers = !showUsers">
+          <span class="user-dot" :style="{background: currentUser?.color || '#FF6B35'}"></span>
+          <span class="user-name">{{ currentUser?.name || '用户' }}</span>
+          <span class="user-arrow">▾</span>
+        </div>
+
+        <div v-if="showUsers" class="user-dropdown" @click.stop>
+          <div class="dropdown-title">切换用户</div>
+          <div v-for="u in allUsers" :key="u.id" class="user-item" :class="{active: u.id === currentUserId}" @click="switchUser(u)">
+            <span class="ui-dot" :style="{background: u.color}"></span>
+            <span class="ui-name">{{ u.name }}</span>
+            <span v-if="u.id === currentUserId" class="ui-badge">当前</span>
+            <div class="ui-actions">
+              <button class="ui-btn" @click.stop="startRename(u)" title="改名">✎</button>
+              <button v-if="u.id !== 1 && allUsers.length > 1" class="ui-btn danger" @click.stop="confirmDeleteUser(u)" title="删除">✕</button>
+            </div>
+          </div>
+          <div class="dropdown-footer">
+            <button class="btn btn-sm" @click="doCreateUser">+ 新建用户</button>
+          </div>
+        </div>
+
         <button v-if="!biliUser" class="btn btn-login" @click="startLogin">登录B站</button>
         <div v-else class="user-box">
           <img v-if="biliUser.face" :src="proxyImage(biliUser.face)" class="avatar" />
@@ -82,15 +107,27 @@
       <div v-show="!miniPlayer.collapsed" class="mini-body" id="mini-player-teleport"></div>
     </div>
 
+    <!-- 重命名弹窗 -->
+    <div v-if="renameUser" class="modal-overlay" @click="renameUser=null">
+      <div class="modal" @click.stop>
+        <h3>修改用户名</h3>
+        <input v-model="renameValue" class="rename-input" @keyup.enter="doRename" placeholder="输入新名字..." autofocus>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" @click="renameUser=null">取消</button>
+          <button class="btn btn-primary" @click="doRename">确认</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" :class="{show: toastMsg}">{{ toastMsg }}</div>
   </div>
 </template>
 
 <script setup>
-import { ref, provide, onMounted } from 'vue'
+import { ref, provide, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, proxyImage } from './api.js'
+import { api, proxyImage, getUserId } from './api.js'
 import QRCode from 'qrcode'
 
 const router = useRouter()
@@ -100,6 +137,102 @@ const searchQuery = ref('')
 const toastMsg = ref('')
 let toastTimer
 let searchTimer = null
+
+// ====== 用户管理 ======
+const showUsers = ref(false)
+const allUsers = ref([])
+const currentUserId = ref(getUserId())
+const currentUser = computed(() => allUsers.value.find(u => u.id === currentUserId.value) || { id: currentUserId.value, name: '用户', color: '#FF6B35' })
+const renameUser = ref(null)
+const renameValue = ref('')
+// 数据版本号：用户切换或数据变更时+1，子组件 watch 它来刷新数据
+const dataVersion = ref(0)
+
+document.addEventListener('click', (e) => {
+  // 下拉菜单内部不关闭
+  if (!e.target.closest('.user-dropdown') && !e.target.closest('.user-switcher')) {
+    showUsers.value = false
+  }
+})
+
+async function loadUsers() {
+  try {
+    const users = await api.listUsers()
+    allUsers.value = users
+    if (!users.find(u => u.id === currentUserId.value)) {
+      currentUserId.value = users[0]?.id || 1
+      localStorage.setItem('bilistudio_user_id', String(currentUserId.value))
+    }
+    api.markUserActive(currentUserId.value).catch(() => {})
+  } catch (e) {
+    // 离线兜底：尝试从 localStorage 恢复用户列表（注意 api.js 使用 bilistudio_cache_ 前缀）
+    const cached = localStorage.getItem('bilistudio_cache_users_data')
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          allUsers.value = parsed
+          return
+        }
+      } catch (_) {}
+    }
+    // 彻底离线且无缓存：只保留一个占位，不创建新用户
+    if (allUsers.value.length === 0) {
+      allUsers.value = [{ id: currentUserId.value, name: '离线用户', color: '#ccc', offline: true }]
+    }
+  }
+}
+
+function switchUser(user) {
+  localStorage.setItem('bilistudio_user_id', String(user.id))
+  router.go(0)
+}
+
+async function doCreateUser() {
+  try {
+    const user = await api.createUser()
+    showToast(`已创建用户: ${user.name}`)
+    localStorage.setItem('bilistudio_user_id', String(user.id))
+    router.go(0)
+  } catch (e) {
+    showToast('创建失败: ' + e.message)
+  }
+}
+
+function startRename(user) {
+  renameUser.value = user
+  renameValue.value = user.name
+}
+
+async function doRename() {
+  if (!renameUser.value || !renameValue.value.trim()) return
+  try {
+    await api.renameUser(renameUser.value.id, renameValue.value.trim())
+    showToast('改名成功')
+    renameUser.value = null
+    await loadUsers()
+  } catch (e) {
+    showToast('改名失败: ' + e.message)
+  }
+}
+
+async function confirmDeleteUser(user) {
+  if (!confirm(`确定删除用户「${user.name}」吗？该用户的所有收藏和数据将被清除。`)) return
+  try {
+    await api.deleteUser(user.id)
+    showToast(`已删除用户: ${user.name}`)
+    await loadUsers()
+    if (currentUserId.value === user.id) {
+      localStorage.setItem('bilistudio_user_id', '1')
+      router.go(0)
+    }
+  } catch (e) {
+    showToast('删除失败: ' + e.message)
+  }
+}
+
+provide('currentUserId', currentUserId)
+provide('dataVersion', dataVersion)
 
 // ====== 浮动迷你播放器状态 ======
 const miniPlayer = ref({
@@ -145,6 +278,7 @@ let qrcodeKey = ''
 let pollTimer = null
 
 onMounted(async () => {
+  await loadUsers()
   await checkLoginStatus()
 })
 
@@ -313,12 +447,89 @@ body {
 .nav a:hover { color: #FF6B35; background: rgba(255,107,53,0.06); }
 .nav a.router-link-active { color: #FF6B35; background: rgba(255,107,53,0.1); font-weight: 600; }
 
-.actions { margin-left: auto; display: flex; align-items: center; flex-shrink: 0; }
+.actions { margin-left: auto; display: flex; align-items: center; flex-shrink: 0; gap: 10px; }
 .btn {
   padding: 8px 18px; border-radius: 10px; border: none;
   font-size: 14px; cursor: pointer; font-weight: 600;
   transition: all .2s; font-family: inherit;
 }
+
+/* ====== 用户切换器 ====== */
+.user-switcher {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 20px;
+  cursor: pointer; border: 1px solid #E2E8F0;
+  background: #F8FAFC; transition: all .15s;
+  position: relative; user-select: none;
+}
+.user-switcher:hover { border-color: #FF6B35; background: #fff; }
+.user-dot {
+  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+}
+.user-name { font-size: 13px; color: #2C3E50; font-weight: 600; }
+.user-arrow { font-size: 10px; color: #94A3B8; }
+
+.user-dropdown {
+  position: absolute; top: 68px; right: 28px;
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.14);
+  border: 1px solid #F1F5F9; width: 260px;
+  padding: 8px 0; z-index: 160;
+  animation: dropIn 0.2s ease-out;
+}
+@keyframes dropIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.dropdown-title {
+  font-size: 12px; color: #94A3B8; font-weight: 600;
+  padding: 6px 16px 10px; letter-spacing: 0.5px;
+}
+.user-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px; cursor: pointer; transition: background .12s;
+}
+.user-item:hover { background: #F8FAFC; }
+.user-item.active { background: #FFF3E0; }
+.ui-dot {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: #fff; font-weight: 700; flex-shrink: 0;
+}
+.ui-name { font-size: 14px; color: #2C3E50; font-weight: 500; flex: 1; }
+.ui-badge {
+  font-size: 10px; color: #FF6B35; background: #FFF3E0;
+  padding: 1px 6px; border-radius: 8px; font-weight: 600;
+}
+.ui-actions { display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+.user-item:hover .ui-actions { opacity: 1; }
+.ui-btn {
+  width: 24px; height: 24px; border-radius: 6px; border: none;
+  background: #F1F5F9; color: #64748B; font-size: 12px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.ui-btn:hover { background: #E2E8F0; }
+.ui-btn.danger:hover { background: #FEE2E2; color: #EF4444; }
+
+.dropdown-footer {
+  padding: 10px 16px; border-top: 1px solid #F1F5F9;
+  margin-top: 4px;
+}
+.btn-sm {
+  width: 100%; padding: 8px; border-radius: 10px;
+  border: 1px dashed #E2E8F0; background: #F8FAFC;
+  color: #FF6B35; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: all .15s; font-family: inherit;
+}
+.btn-sm:hover { background: #FFF3E0; border-color: #FF6B35; }
+
+.rename-input {
+  width: 100%; padding: 10px 14px; border: 2px solid #E2E8F0;
+  border-radius: 10px; font-size: 16px; outline: none;
+  margin: 12px 0; font-family: inherit; text-align: center;
+  transition: border-color .2s;
+}
+.rename-input:focus { border-color: #FF6B35; }
 .btn-login {
   background: linear-gradient(135deg, #45B7D1, #5CC9E0);
   color: #fff; box-shadow: 0 2px 8px rgba(69,183,209,0.25);

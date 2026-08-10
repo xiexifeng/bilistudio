@@ -38,10 +38,11 @@
       <div v-else class="video-grid">
         <VideoCard
           v-for="v in items" :key="v.bvid" :video="v"
-          show-delete
+          show-delete show-status
           @click="goPlay"
           @delete="removeItem"
           @author="goAuthor"
+          @cycleStatus="cycleStatus"
         />
       </div>
     </template>
@@ -95,7 +96,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, inject } from 'vue'
+import { ref, onMounted, inject, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, proxyImage } from '../api.js'
 import VideoCard from '../components/VideoCard.vue'
@@ -103,6 +104,7 @@ import VideoCard from '../components/VideoCard.vue'
 const router = useRouter()
 const showToast = inject('showToast')
 const biliUser = inject('biliUser')
+const dataVersion = inject('dataVersion')
 
 const activeTab = ref('local')
 const items = ref([])
@@ -122,6 +124,18 @@ const biliLoading = ref(false)
 function goPlay(video) { router.push(`/play/${video.bvid}`) }
 function goAuthor(video) {
   if (video.author_mid) router.push(`/user/${video.author_mid}`)
+}
+
+const STATUS_CYCLE = { todo: 'in_progress', in_progress: 'done', done: 'todo' }
+async function cycleStatus(video) {
+  const newStatus = STATUS_CYCLE[video.status] || 'todo'
+  try {
+    await api.updateCollection(video.bvid, { status: newStatus })
+    video.status = newStatus
+    showToast(`已标记为: ${newStatus === 'todo' ? '待学习' : newStatus === 'in_progress' ? '学习中' : '已完成'}`)
+  } catch (e) {
+    showToast(e.message)
+  }
 }
 
 function filterAuthor(name) { currentAuthor.value = name; loadData() }
@@ -199,6 +213,7 @@ async function addToLocal(video) {
 }
 
 onMounted(() => { loadData(); loadAuthors() })
+watch(dataVersion, () => { loadData(); loadAuthors() })
 </script>
 
 <style scoped>

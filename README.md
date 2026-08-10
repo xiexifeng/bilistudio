@@ -1,6 +1,6 @@
 # BiliStudio — 个人B站内容聚合收藏站
 
-面向小学生家长的少儿教育版，聚合 B站教育/科普/知识类视频，支持搜索、收藏、播放、UP主追踪、合集浏览。扫码登录后可同步 B站个人收藏夹、关注列表和观看历史。
+面向小学生家长的少儿教育版，聚合 B站教育/科普/知识类视频。支持多用户（家庭账号）、学习路线、统计面板、PWA 离线访问。扫码登录后可同步 B站个人收藏夹、关注列表和观看历史。
 
 ## 功能总览
 
@@ -19,6 +19,22 @@
 | 📺 画中画（浮动播放器） | 离开播放页自动缩小为右下角浮动窗口，视频不中断。可收起/展开/关闭，点击标题回到全屏 |
 | ⭐ 本地收藏 | 一键收藏到本地 SQLite，支持按 UP主筛选/关键词搜索/删除 |
 | 📤 导出/导入 | JSON 格式备份收藏，按 bvid 自动去重 |
+| 📝 学习状态 | 每个收藏可标记「待学习→学习中→已完成」循环切换，卡片上显示对应标签 |
+
+### 多用户 & 学习管理
+| 功能 | 说明 |
+|---|---|
+| 👨‍👩‍👧 多用户 | 一键创建用户（自动随机命名如小兔、小方），可改名、删除。切换用户后收藏/浏览/课程数据完全隔离 |
+| 📊 统计面板 | 总收藏数、待学习/学习中/已完成分布、最爱 UP主排行、近30天学习天数 |
+| 📖 学习路线 | 5 条预设路线（数学启蒙、英语自然拼读、科学探索、编程入门、大语文），分关卡打卡 |
+| ⭐ 学习进度 | 学习路线中每个关卡可打卡标记完成，显示进度百分比和当前关卡 |
+
+### PWA 离线支持
+| 功能 | 说明 |
+|---|---|
+| 📲 安装到桌面 | 浏览器地址栏显示安装按钮，桌面图标打开后为独立窗口（无浏览器地址栏） |
+| 🔌 离线浏览 | 断网时仍可打开 App，查看已缓存的收藏列表、学习进度、统计面板 |
+| 💾 双层缓存 | Service Worker 缓存前端壳 + API 响应；localStorage 缓存收藏/用户数据，后端不可用时兜底 |
 
 ### B站账号集成
 | 功能 | 说明 |
@@ -69,28 +85,36 @@ bilistudio/
 │   ├── routers/
 │   │   ├── auth.py              # B站扫码登录
 │   │   ├── bilibili.py          # B站内容接口（搜索/详情/UP主/合集/登录态内容）
-│   │   └── collection.py        # 本地收藏 CRUD
+│   │   ├── collection.py        # 本地收藏 CRUD（含学习状态管理）
+│   │   ├── users.py             # 多用户管理（创建/列表/改名/删除/活跃标记）
+│   │   ├── stats.py             # 统计面板（收藏分布/UP主排行/学习天数）
+│   │   └── courses.py           # 学习路线进度（关卡打卡/查询）
 │   └── utils/
 │       ├── bili_api.py          # B站 API 封装（7层风控/缓存/WBI签名/动态指纹/bili_ticket/合集/数据清洗）
 │       └── bili_auth.py         # 扫码登录管理器
 │
-└── frontend/                    # Vue 3
-    ├── package.json
-    ├── vite.config.js           # 构建配置 + 开发代理
-    ├── index.html
-    └── src/
-        ├── main.js              # Vue 入口
-        ├── App.vue              # 根组件（顶栏/登录/迷你播放器/Toast）
-        ├── api.js               # API 封装（请求队列/图片代理/合集接口）
-        ├── curated.js           # 精选 UP主数据 & 快捷搜索分类
-        ├── router/index.js      # Hash 路由
-        ├── components/
-        │   └── VideoCard.vue    # 视频卡片组件
-        └── views/
-            ├── Home.vue         # 首页（精选/搜索/分类）
-            ├── Player.vue       # 播放页（iframe/合集&多P选集/侧边收藏/画中画）
-            ├── Collection.vue   # 收藏页（本地/B站收藏夹）
-            └── User.vue         # UP主主页（信息/视频列表）
+    └── frontend/                    # Vue 3
+        ├── package.json
+        ├── vite.config.js           # 构建配置 + 开发代理
+        ├── index.html               # PWA 配置（manifest + theme-color）
+        └── src/
+            ├── main.js              # Vue 入口 + Service Worker 注册
+            ├── App.vue              # 根组件（顶栏/用户切换/登录/迷你播放器/Toast）
+            ├── api.js               # API 封装（请求队列/图片代理/localStorage 离线缓存）
+            ├── curated.js           # 精选 UP主数据 & 快捷搜索分类 & 5条学习路线
+            ├── router/index.js      # Hash 路由
+            ├── components/
+            │   └── VideoCard.vue    # 视频卡片组件（含学习状态标签）
+            └── views/
+                ├── Home.vue         # 首页（精选/搜索/分类）
+                ├── Player.vue       # 播放页（iframe/合集&多P选集/侧边收藏/画中画）
+                ├── Collection.vue   # 收藏页（本地/B站收藏夹/学习状态切换）
+                ├── User.vue         # UP主主页（信息/视频列表）
+                ├── Stats.vue        # 统计面板（收藏分布/UP主排行/学习天数）
+                └── Courses.vue      # 学习路线（关卡打卡/进度追踪）
+        └── public/
+            ├── manifest.json        # PWA 应用清单
+            └── sw.js                # Service Worker（分层缓存策略）
 ```
 
 ## 开发环境启动
@@ -352,12 +376,36 @@ GET    /bilibili/proxy/image     ?url=         代理 B站图片（防盗链）
 
 ```
 POST   /collection               { bvid, title, author, ... }  添加收藏
-GET    /collection               ?author=&keyword=&page=&page_size=  查询列表
-DELETE /collection/{bvid}        删除收藏
-GET    /collection/authors       所有 UP主（带视频数）
+GET    /collection               ?user_id=&author=&keyword=&page=&page_size=  查询列表
+PUT    /collection/{bvid}        ?user_id=  { status }  更新学习状态
+DELETE /collection/{bvid}        ?user_id=  删除收藏
+GET    /collection/authors       ?user_id=  所有 UP主（带视频数）
 GET    /collection/export        导出 JSON
 POST   /collection/import        { data: [...] }  导入 JSON
 ```
+
+### 用户管理
+
+```
+GET    /users                    用户列表
+POST   /users                    创建用户（自动随机命名+颜色）
+PUT    /users/{id}               { name }  改名
+DELETE /users/{id}               删除用户（含所有收藏数据）
+POST   /users/{id}/active        标记用户活跃（更新时间戳）
+```
+
+### 统计
+
+```
+GET    /stats                    ?user_id=  统计面板数据
+       → { total, todo, in_progress, done, top_authors, active_days }
+```
+
+### 学习路线
+
+```
+GET    /courses/progress         ?user_id=  所有路线打卡进度
+PUT    /courses/check            ?user_id=  { stage_id, checked }  关卡打卡/取消
 
 ### 系统
 
@@ -401,8 +449,14 @@ POST   /api/config/rate         调整频率限制配置
 ```
 开发模式：
 浏览器 ──→ Vite Dev Server(:5173) ──→ /api → FastAPI(:8000) ──→ B站 API
-                                                         │
-                                                   SQLite + Cookie
+     │                                              │
+     │  Service Worker  离线降级                     │
+     │  ├─ shell 缓存 (HTML/JS/CSS)                 SQLite (data.db)
+     │  ├─ api 缓存 (收藏/用户/统计)                  │
+     │  └─ image 缓存 (封面图)                        ├─ users 表
+     │                                               ├─ collection 表
+     localStorage                                     └─ stage_progress 表
+       └─ bilistudio_cache_*  断网兜底缓存
 ```
 
 ---
@@ -431,7 +485,19 @@ A: 迷你播放器共享播放页的同一个 iframe（Teleport），声音状�
 A: 收藏页有"导出"按钮（JSON），同时建议定期备份 `backend/data.db` 和 `backend/.bili_cookies.json`。
 
 ### Q: 可以部署到服务器多人使用吗
-A: 可以，但需注意：B站 Cookie 是全局的（一个账号登录所有人共用），收藏数据也是共享的。如需多用户隔离需要改造认证和数据库层。
+A: 可以，但需注意：B站 Cookie 是全局的（一个账号登录所有人共用）。**v2.0 已支持多用户**：本地用户系统独立于 B站登录，收藏/浏览/课程数据按本地用户隔离。B站扫码登录作为"内容源"，不影响本地用户切换。
+
+### Q: 如何创建和切换用户
+A: 首次访问自动创建随机名用户（如小兔、小方）。点击顶栏"用户 ▾"下拉菜单可创建新用户、改名、删除或切换到其他用户。切换后全页刷新，所有数据跟随当前用户。
+
+### Q: 可以离线使用吗
+A: PWA 离线支持：后端在线时正常使用（SW 后台静默缓存 API 响应），后端不可用时自动从缓存读取收藏/用户/统计数据。完全断网时仍可打开 App 浏览缓存内容，搜索和视频播放需要网络。
+
+### Q: 如何安装到桌面
+A: 浏览器地址栏右侧会出现安装图标（PWA），点击即可添加到桌面。后续从桌面图标打开为独立窗口（无浏览器地址栏）。
+
+### Q: 学习路线数据是B站提供的吗
+A: 不是。5 条学习路线（数学、英语、科学、编程、语文）由项目内置的 `curated.js` 定义，关卡打卡进度存储在本地数据库，完全自主可控。
 
 ### Q: 可以改端口吗
 A: 前端端口在 `vite.config.js` 的 `server.port`。后端端口在 `main.py` 的 `uvicorn.run(port=8000)` 和前端 `vite.config.js` 代理 target。同时需要更新 `main.py` 的 CORS `allow_origins`。

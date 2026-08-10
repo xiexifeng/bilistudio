@@ -703,63 +703,8 @@ def search_videos(keyword: str, page: int = 1) -> BiliSearchResult:
 
 # ===================== 视频详情 =====================
 
-def get_video_detail(bvid: str) -> BiliVideoDetail:
-    """获取视频详情（WBI 签名 + 浏览器指纹）"""
-    params = _sign_with_dm({
-        "bvid": bvid,
-        "web_location": "333.1387",
-    })
-    try:
-        data = _cached_request(
-            "https://api.bilibili.com/x/web-interface/wbi/view",
-            params, ttl=60,
-        )
-    except RuntimeError:
-        logger.warning("WBI video_detail 失败，回退 legacy")
-        data = _cached_request(
-            "https://api.bilibili.com/x/web-interface/view",
-            {"bvid": bvid}, ttl=60,
-        )
-    info = data["data"]
-    owner = info.get("owner", {})
-    return BiliVideoDetail(
-        bvid=info.get("bvid", ""), title=_clean_title(info.get("title", "")),
-        author=owner.get("name", ""), author_mid=owner.get("mid"),
-        pic=info.get("pic", ""), description=info.get("desc", ""),
-        duration=_format_duration(info.get("duration", 0)),
-        play_count=info.get("stat", {}).get("view"),
-        pubdate=_format_pubdate(info.get("pubdate", 0)), cid=info.get("cid"),
-    )
-
-
-# ===================== 视频合集 =====================
-
-def _fetch_video_view_raw(bvid: str) -> dict:
-    """直接调 WBI view 接口拿原始响应（用于提取 ugc_season 合集信息）"""
-    params = _sign_with_dm({"bvid": bvid, "web_location": "333.1387"})
-    return _cached_request(
-        "https://api.bilibili.com/x/web-interface/wbi/view",
-        params, ttl=60,
-    )
-
-
-def get_video_collection(bvid: str) -> Optional[BiliCollection]:
-    """从视频详情接口提取视频所属的合集及所有视频列表。
-
-    B 站的合集信息会嵌入在 `data.ugc_season` 字段中。
-    - 如果视频不属于任何合集，返回 None
-    - 合集视频分布在 sections[].episodes[]，按 sections 顺序展平
-
-    注意：需要在视频详情接口上调用一次（detail 接口本身没有把 ugc_season 暴露出去），
-    命中率会通过 TTL 缓存（60s）复用。
-    """
-    try:
-        data = _fetch_video_view_raw(bvid)
-    except RuntimeError as e:
-        logger.warning(f"get_video_collection: view 接口失败 ({e})")
-        return None
-    info = data.get("data", {})
-
+def _build_collection_from_view(info: dict, bvid: str) -> Optional[BiliCollection]:
+    """从 B站 view 接口的 data 字段中提取合集/多P信息。"""
     # 1. 优先检查 UGC 合集 (ugc_season)
     ugc = info.get("ugc_season")
     if ugc:
@@ -798,14 +743,14 @@ def get_video_collection(bvid: str) -> Optional[BiliCollection]:
         video_pic = info.get("pic")
         for p in pages:
             videos.append(BiliCollectionItem(
-                bvid=bvid,  # 多P视频共享同一个 BVID
+                bvid=bvid,
                 title=_clean_title(p.get("part", "")),
                 pic=video_pic,
                 duration=_format_duration(p.get("duration", 0)),
                 page=p.get("page", 1),
             ))
         return BiliCollection(
-            season_id=0,  # 多P视频用 0 标记
+            season_id=0,
             title=info.get("title", "") or "视频选集",
             cover=video_pic,
             mid=info.get("owner", {}).get("mid", 0),
@@ -814,6 +759,64 @@ def get_video_collection(bvid: str) -> Optional[BiliCollection]:
         )
 
     return None
+
+
+def get_video_detail(bvid: str) -> BiliVideoDetail:
+    """获取视频详情（WBI 签名 + 浏览器指纹），同时附带合集/多P信息。
+
+    一次 B站 view 接口请求同时返回视频详情 + collection，避免前端再发一次 collection 请求。
+    """
+    params = _sign_with_dm({
+        "bvid": bvid,
+        "web_location": "333.1387",
+    })
+    try:
+        data = _cached_request(
+            "https://api.bilibili.com/x/web-interface/wbi/view",
+            params, ttl=60,
+        )
+    except RuntimeError:
+        logger.warning("WBI video_detail 失败，回退 legacy")
+        data = _cached_request(
+            "https://api.bilibili.com/x/web-interface/view",
+            {"bvid": bvid}, ttl=60,
+        )
+    info = data["data"]
+    owner = info.get("owner", {})
+    collection = _build_collection_from_view(info, bvid)
+    return BiliVideoDetail(
+        bvid=info.get("bvid", ""), title=_clean_title(info.get("title", "")),
+        author=owner.get("name", ""), author_mid=owner.get("mid"),
+        pic=info.get("pic", ""), description=info.get("desc", ""),
+        duration=_format_duration(info.get("duration", 0)),
+        play_count=info.get("stat", {}).get("view"),
+        pubdate=_format_pubdate(info.get("pubdate", 0)), cid=info.get("cid"),
+        collection=collection,
+    )
+
+
+# ===================== 视频合集 =====================
+
+def _fetch_video_view_raw(bvid: str) -> dict:
+    """直接调 WBI view 接口拿原始响应（用于提取 ugc_season 合集信息）"""
+    params = _sign_with_dm({"bvid": bvid, "web_location": "333.1387"})
+    return _cached_request(
+        "https://api.bilibili.com/x/web-interface/wbi/view",
+        params, ttl=60,
+    )
+
+
+def get_video_collection(bvid: str) -> Optional[BiliCollection]:
+    """从视频详情接口提取视频所属的合集及所有视频列表。
+
+    已被 get_video_detail 内联复用；本接口保留供独立调用场景使用。
+    """
+    try:
+        data = _fetch_video_view_raw(bvid)
+    except RuntimeError as e:
+        logger.warning(f"get_video_collection: view 接口失败 ({e})")
+        return None
+    return _build_collection_from_view(data.get("data", {}), bvid)
 
 
 def _parse_collection_episode(ep: dict, section_title: Optional[str]) -> Optional[BiliCollectionItem]:
