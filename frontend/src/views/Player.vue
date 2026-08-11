@@ -105,7 +105,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { api, proxyImage } from '../api.js'
+import { api, proxyImage, clearPlayurlCache } from '../api.js'
 import DPlayer from 'dplayer'
 
 const props = defineProps({ bvid: String })
@@ -223,6 +223,22 @@ async function _doInitPlayer(cid) {
         showToast?.(`⏭ 自动播放下一集: ${next.title}`)
         playNext()
       }
+    })
+
+    // === CDN URL 过期兜底：延迟判断，避免初始化时的短暂 error 误触发 ===
+    let retried = false
+    dp.on('error', () => {
+      if (retried) return
+      retried = true
+      setTimeout(() => {
+        const v = dp?.video
+        // 只有 1.5s 后 video 确实仍无法播放才重试
+        if (v && v.networkState === 3 && v.readyState < 2) {
+          clearPlayurlCache(props.bvid, cid)
+          showToast?.('⚠️ 播放失败，正在重试...')
+          initPlayer()
+        }
+      }, 1500)
     })
 
     // === PiP 关闭时：自动回到播放页 ===

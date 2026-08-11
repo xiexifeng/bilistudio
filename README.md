@@ -54,7 +54,7 @@
 | 动态浏览器指纹 | `dm_img_str`、`dm_cover_img_str` 等参数每次请求随机生成 |
 | bili_ticket JWT 鉴权 | 自动获取 B站新鉴权 token，提前 1h 刷新 |
 | WBI 签名 + 接口参数修正 | 空间页使用正确的 `web_location`，Sec-CH-UA 头模拟 Chrome |
-| TTL 内存缓存 | 搜索结果 60s，视频详情 60s，合集数据也在 view 接口响应中一并缓存 |
+| TTL 内存缓存 | 搜索结果 60s，视频详情 60s，playurl CDN 直链 3600s（1 小时），合集数据也在 view 接口响应中一并缓存 |
 
 ## 技术栈
 
@@ -100,14 +100,14 @@ bilistudio/
         └── src/
             ├── main.js              # Vue 入口 + Service Worker 注册
             ├── App.vue              # 根组件（顶栏/用户切换/登录/Toast）
-            ├── api.js               # API 封装（请求队列/图片代理/localStorage 离线缓存）
+            ├── api.js               # API 封装（请求队列/图片代理/playurl 前端 Map 缓存/localStorage 离线缓存）
             ├── curated.js           # 精选 UP主数据 & 快捷搜索分类 & 5条学习路线
             ├── router/index.js      # Hash 路由
             ├── components/
             │   └── VideoCard.vue    # 视频卡片组件（含学习状态标签）
             └── views/
                 ├── Home.vue         # 首页（精选/搜索/分类）
-                ├── Player.vue       # 播放页（DPlayer/合集&多P选集/侧边收藏/自动连播/画中画）
+                ├── Player.vue       # 播放页（DPlayer/合集&多P选集/侧边收藏/自动连播/画中画/playurl 前端缓存）
                 ├── Collection.vue   # 收藏页（本地/B站收藏夹/学习状态切换）
                 ├── User.vue         # UP主主页（信息/视频列表）
                 ├── Stats.vue        # 统计面板（收藏分布/UP主排行/学习天数）
@@ -352,7 +352,7 @@ POST   /auth/logout              登出
 ```
 GET    /bilibili/search          ?keyword=&page=        搜索视频（自动过滤广告，WBI 风控时自动回退 legacy 接口）
 GET    /bilibili/video/{bvid}    视频详情（含 WBI view 数据、合集、多P）
-GET    /bilibili/video/{bvid}/playurl  ?cid=&qn=      获取视频 CDN 直链（WBI 签名，DPlayer 播放用）
+GET    /bilibili/video/{bvid}/playurl  ?cid=&qn=      获取视频 CDN 直链（WBI 签名，后端缓存 1h + 前端 Map 缓存，切回已播视频秒播）
 GET    /bilibili/video/{bvid}/collection  视频所属合集/多P选集
 GET    /bilibili/user/{mid}      UP主信息
 GET    /bilibili/user/{mid}/videos  ?page=&source=      UP主视频列表

@@ -1140,7 +1140,7 @@ def get_playurl(bvid: str, cid: int, qn: int = 80) -> dict:
 
     data = _cached_request(
         "https://api.bilibili.com/x/player/wbi/playurl",
-        params, ttl=30,       # 短 TTL：CDN URL 有时效
+        params, ttl=3600,     # 1h：CDN URL expire 通常数小时
     )
     result = data["data"]
     durl = result.get("durl", [])
