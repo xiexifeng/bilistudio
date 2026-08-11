@@ -4,9 +4,9 @@
 //   2. API 响应（收藏/用户）→ 运行时缓存，网络优先，离线降级
 //   3. 图片（封面代理）→ 运行时缓存，缓存优先
 
-const CACHE_SHELL = 'bilistudio-shell-v2'
-const CACHE_API = 'bilistudio-api-v2'
-const CACHE_IMAGE = 'bilistudio-image-v2'
+const CACHE_SHELL = 'bilistudio-shell-v3'
+const CACHE_API = 'bilistudio-api-v3'
+const CACHE_IMAGE = 'bilistudio-image-v3'
 
 // 安装时预缓存的静态资源
 const SHELL_FILES = [

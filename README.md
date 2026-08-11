@@ -14,9 +14,9 @@
 ### 播放 & 收藏
 | 功能 | 说明 |
 |---|---|
-| ▶️ 视频播放 | iframe 嵌入 B站官方播放器，支持弹幕，默认有声音（`autoplay=0, muted=0`） |
+| ▶️ 视频播放 | DPlayer（JS 播放器），支持弹幕，默认有声音。播放结束自动连播下一集（可开关） |
 | 📚 合集 & 多P 选集 | 视频详情页右侧自动显示合集列表或多P选集，点击直接切换，**不刷新页面** |
-| 📺 画中画（浮动播放器） | 离开播放页自动缩小为右下角浮动窗口，视频不中断。可收起/展开/关闭，点击标题回到全屏 |
+| 📺 画中画 | 离开播放页自动弹窗为浏览器原生画中画（PiP），视频持续播放不中断。回到播放页自动恢复 |
 | ⭐ 本地收藏 | 一键收藏到本地 SQLite，支持按 UP主筛选/关键词搜索/删除 |
 | 📤 导出/导入 | JSON 格式备份收藏，按 bvid 自动去重 |
 | 📝 学习状态 | 每个收藏可标记「待学习→学习中→已完成」循环切换，卡片上显示对应标签 |
@@ -50,7 +50,7 @@
 |---|---|
 | 前端请求队列 | 同一时间只允许 1 个 B站请求在飞，间隔 ≥800ms |
 | 后端全局节流 | 两次请求最小间隔 1s，_fetch_wbi_keys 也纳入节流 |
-| 全局熔断器 | 遇到 -799 自动 60s 冷却，所有 B站请求暂停 |
+| 全局熔断器 | 遇到 -799 自动 60s 冷却，所有 B站请求暂停；搜索接口遇到 `v_voucher` 风控自动回退 legacy 接口 |
 | 动态浏览器指纹 | `dm_img_str`、`dm_cover_img_str` 等参数每次请求随机生成 |
 | bili_ticket JWT 鉴权 | 自动获取 B站新鉴权 token，提前 1h 刷新 |
 | WBI 签名 + 接口参数修正 | 空间页使用正确的 `web_location`，Sec-CH-UA 头模拟 Chrome |
@@ -90,7 +90,7 @@ bilistudio/
 │   │   ├── stats.py             # 统计面板（收藏分布/UP主排行/学习天数）
 │   │   └── courses.py           # 学习路线进度（关卡打卡/查询）
 │   └── utils/
-│       ├── bili_api.py          # B站 API 封装（7层风控/缓存/WBI签名/动态指纹/bili_ticket/合集/数据清洗）
+│       ├── bili_api.py          # B站 API 封装（7层风控/缓存/WBI签名/动态指纹/bili_ticket/合集/playurl CDN直链/v_voucher 回退/数据清洗）
 │       └── bili_auth.py         # 扫码登录管理器
 │
     └── frontend/                    # Vue 3
@@ -99,7 +99,7 @@ bilistudio/
         ├── index.html               # PWA 配置（manifest + theme-color）
         └── src/
             ├── main.js              # Vue 入口 + Service Worker 注册
-            ├── App.vue              # 根组件（顶栏/用户切换/登录/迷你播放器/Toast）
+            ├── App.vue              # 根组件（顶栏/用户切换/登录/Toast）
             ├── api.js               # API 封装（请求队列/图片代理/localStorage 离线缓存）
             ├── curated.js           # 精选 UP主数据 & 快捷搜索分类 & 5条学习路线
             ├── router/index.js      # Hash 路由
@@ -107,7 +107,7 @@ bilistudio/
             │   └── VideoCard.vue    # 视频卡片组件（含学习状态标签）
             └── views/
                 ├── Home.vue         # 首页（精选/搜索/分类）
-                ├── Player.vue       # 播放页（iframe/合集&多P选集/侧边收藏/画中画）
+                ├── Player.vue       # 播放页（DPlayer/合集&多P选集/侧边收藏/自动连播/画中画）
                 ├── Collection.vue   # 收藏页（本地/B站收藏夹/学习状态切换）
                 ├── User.vue         # UP主主页（信息/视频列表）
                 ├── Stats.vue        # 统计面板（收藏分布/UP主排行/学习天数）
@@ -350,8 +350,9 @@ POST   /auth/logout              登出
 ### B站内容（无需登录）
 
 ```
-GET    /bilibili/search          ?keyword=&page=        搜索视频（自动过滤广告）
-GET    /bilibili/video/{bvid}    视频详情
+GET    /bilibili/search          ?keyword=&page=        搜索视频（自动过滤广告，WBI 风控时自动回退 legacy 接口）
+GET    /bilibili/video/{bvid}    视频详情（含 WBI view 数据、合集、多P）
+GET    /bilibili/video/{bvid}/playurl  ?cid=&qn=      获取视频 CDN 直链（WBI 签名，DPlayer 播放用）
 GET    /bilibili/video/{bvid}/collection  视频所属合集/多P选集
 GET    /bilibili/user/{mid}      UP主信息
 GET    /bilibili/user/{mid}/videos  ?page=&source=      UP主视频列表
@@ -431,7 +432,7 @@ POST   /api/config/rate         调整频率限制配置
 **后端**：`get_video_collection(bvid)` 在 `bili_api.py` → 路由 `GET /bilibili/video/{bvid}/collection`，view 接口响应有 60s TTL 缓存。
 **前端**：`Player.vue` 中 `loadCollection()` → `api.videoCollection(bvid)` → 渲染 `collection.videos` 列表。
 
-**同合集内切换**：检测新视频 BVID 是否在当前合集列表中，如果是则跳过合集刷新，只更新播放器 iframe。
+**同合集内切换**：检测新视频 BVID 是否在当前合集列表中，如果是则跳过合集刷新，只更新播放器。
 
 ---
 
@@ -470,16 +471,19 @@ A: 系统已内置 7 层防限流保护（全局熔断 60s + 动态指纹 + bili
 A: 图片都走后端代理了，检查后端 8000 端口是否正常。图片代理有内存缓存（1小时），首次访问稍慢。
 
 ### Q: 播放器没声音
-A: B站嵌入播放器默认静音+自动播放。当前已固定参数 `autoplay=0&muted=0`，关闭自动播放后浏览器不会强制静音。如果仍然静音，刷新页面后手动点播放按钮。
+A: DPlayer 播放器默认不静音。如果仍然没声音，检查浏览器是否阻止了自动播放（Chrome 等浏览器对有声自动播放有限制），手动点一下播放按钮即可。
+
+### Q: 画中画标题显示 localhost 或无法自定义
+A: 浏览器原生 Picture-in-Picture API 的窗口标题由浏览器控制，优先显示来源域名，`document.title` 设置不一定生效。这是 API 层面的硬限制，无法绕过。
+
+### Q: 画中画关闭/最小化效果一样
+A: 原生 PiP 窗口的三个按钮（最小化/回标签页/关闭）全都触发同一个 `leavepictureinpicture` 事件，API 层面无法区分用户点了哪个。当前统一处理为回到播放页。
 
 ### Q: 合集列表不显示
 A: 并非所有视频都有合集。只有 UP主创建的 B站官方合集（ugc_season）或多P分集视频才会显示。合集数据从视频详情接口的 `ugc_season` 字段提取，一次请求即获取完整列表。
 
 ### Q: 扫码登录后看不到收藏夹
 A: 切换到"收藏"页面，点击顶部的"B站收藏夹"标签页。
-
-### Q: 迷你播放器没声音/没画面
-A: 迷你播放器共享播放页的同一个 iframe（Teleport），声音状态一致。如出现异常，刷新页面重新进入播放页即可。
 
 ### Q: 如何备份数据
 A: 收藏页有"导出"按钮（JSON），同时建议定期备份 `backend/data.db` 和 `backend/.bili_cookies.json`。
@@ -503,7 +507,7 @@ A: 不是。5 条学习路线（数学、英语、科学、编程、语文）由
 A: 前端端口在 `vite.config.js` 的 `server.port`。后端端口在 `main.py` 的 `uvicorn.run(port=8000)` 和前端 `vite.config.js` 代理 target。同时需要更新 `main.py` 的 CORS `allow_origins`。
 
 ### Q: 为什么点合集/多P 视频不刷新页面
-A: 这是设计行为。多P视频通过切换 `currentPage` 只更新播放器 iframe（同一个 BVID，不同 `p` 参数）。合集视频切换 BVID 时需要路由跳转，但如果新视频仍在当前合集中，会跳过合集列表的重新加载。目的是减少不必要的请求和页面闪烁。
+A: 这是设计行为。多P视频通过切换 `currentPage` 只更新播放器（同一个 BVID，不同 `p` 参数）。合集视频切换 BVID 时需要路由跳转，但如果新视频仍在当前合集中，会跳过合集列表的重新加载。目的是减少不必要的请求和页面闪烁。
 
 ---
 

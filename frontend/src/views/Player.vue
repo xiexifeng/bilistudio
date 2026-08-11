@@ -1,21 +1,15 @@
 <template>
   <div class="player-page">
     <div class="left">
-    <div class="player-wrap">
-      <Teleport :to="teleportTarget" :disabled="!teleportTarget">
-        <iframe
-          :src="embedUrl"
-          frameborder="0"
-          allowfullscreen
-          allow="autoplay; fullscreen"
-          scrolling="no"
-        ></iframe>
-      </Teleport>
-      <!-- 当 iframe 被传送到小窗时，占位保持页面布局 -->
-      <div v-if="teleportTarget" class="teleport-placeholder">
-        <span>📺 已切换至小窗播放</span>
+      <div class="player-wrap" :class="{ 'player-empty': !detail }">
+        <div ref="playerContainer" class="dplayer-container"></div>
+        <div v-if="!detail" class="player-overlay">
+          <span class="spinner"></span>加载视频信息...
+        </div>
+        <div v-else-if="playerLoading" class="player-overlay">
+          <span class="spinner"></span>获取播放地址...
+        </div>
       </div>
-    </div>
 
       <div class="video-info" v-if="detail">
         <h1 class="video-title">{{ detail.title }}</h1>
@@ -37,6 +31,16 @@
           >
             ▶ 播放下一集
           </button>
+          <button
+            v-if="nextEpisode"
+            class="btn btn-autoplay"
+            :class="{ active: autoplayNext }"
+            @click="toggleAutoplayNext"
+            :title="autoplayNext ? '已开启自动连播' : '已关闭自动连播'"
+          >
+            <span class="autoplay-icon">{{ autoplayNext ? '🔁' : '⏸' }}</span>
+            {{ autoplayNext ? '自动连播：开' : '自动连播：关' }}
+          </button>
           <a :href="`https://www.bilibili.com/video/${detail.bvid}`" target="_blank" class="btn btn-outline">在B站打开</a>
         </div>
 
@@ -49,7 +53,7 @@
     </div>
 
     <aside class="right">
-      <!-- 合集/选集列表（视频属于合集或多P时显示） -->
+      <!-- 合集/选集列表 -->
       <div v-if="collection" class="collection-block">
         <div class="collection-header">
           <h3>{{ isMultiP ? '🎬 视频选集' : '📚 合集列表' }}</h3>
@@ -99,68 +103,156 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onActivated, onDeactivated, inject, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, computed, onMounted, onBeforeUnmount, onActivated, onDeactivated, inject, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { api, proxyImage } from '../api.js'
+import DPlayer from 'dplayer'
 
 const props = defineProps({ bvid: String })
 const router = useRouter()
-const route = useRoute()
 const showToast = inject('showToast')
-const openMiniPlayer = inject('openMiniPlayer')
-const closeMiniPlayer = inject('closeMiniPlayer')
-const miniPlayerState = inject('miniPlayerState')
 
 defineOptions({ name: 'Player' })
 
-// Teleport 目标：小窗激活时把 iframe 移植到迷你播放器，保留播放状态和声音
-const teleportTarget = computed(() => {
-  if (miniPlayerState?.value?.visible && miniPlayerState.value.bvid === props.bvid) {
-    return '#mini-player-teleport'
-  }
-  return null  // null = 渲染在原位
-})
+// ====== 播放器 ======
+const playerContainer = ref(null)
+const playerLoading = ref(false)
+let dp = null
+let initTimer = null    // debounce 计时器
+let initLock = false    // 防止并发初始化
 
+// ====== 数据状态 ======
 const detail = ref(null)
 const loading = ref(true)
 const myCollection = ref([])
 const isCollected = ref(false)
 const collection = ref(null)
-const currentPage = ref(1)  // 当前多P视频的分页号
+const currentPage = ref(1)
 
-// 判断是否为多P视频选集（season_id === 0 表示多P）
+// ====== 自动播放下一集开关（localStorage 持久化，默认关闭） ======
+const _autoplayStored = (() => {
+  try { return localStorage.getItem('bilistudio_autoplay_next') === 'true' }
+  catch { return false }
+})()
+const autoplayNext = ref(_autoplayStored)
+function toggleAutoplayNext() {
+  autoplayNext.value = !autoplayNext.value
+  try { localStorage.setItem('bilistudio_autoplay_next', String(autoplayNext.value)) } catch {}
+}
+
+// ====== 当前视频的 cid（多P时取对应 page 的 cid） ======
+const currentCid = computed(() => {
+  if (!detail.value) return null
+  if (isMultiP.value && collection.value?.videos) {
+    const pageItem = collection.value.videos.find(v => v.page === currentPage.value)
+    return pageItem?.cid || detail.value.cid
+  }
+  return detail.value.cid
+})
+
+// ====== 合集/多P ======
 const isMultiP = computed(() => collection.value?.season_id === 0)
-
-// 是否存在合集/选集
 const hasCollection = computed(() => !!collection.value?.videos?.length)
 
-// 下一集（合集/选集中的下一项）
 const nextEpisode = computed(() => {
   if (!hasCollection.value) return null
-
   if (isMultiP.value) {
     const nextPage = currentPage.value + 1
     const next = collection.value.videos.find(v => v.page === nextPage)
     if (next) return { type: 'page', page: nextPage, bvid: props.bvid, title: next.title }
     return null
   }
-
-  // 合集视频：找到当前视频位置，返回下一项
   const idx = collection.value.videos.findIndex(v => v.bvid === props.bvid)
   if (idx < 0 || idx >= collection.value.videos.length - 1) return null
   const n = collection.value.videos[idx + 1]
   return { type: 'bvid', bvid: n.bvid, title: n.title }
 })
 
-// 是否已是最后一集
 const isLastEpisode = computed(() => hasCollection.value && nextEpisode.value === null)
 
-const embedUrl = computed(() => {
-  if (!props.bvid) return ''
-  const pageParam = currentPage.value > 1 ? `&p=${currentPage.value}` : ''
-  return `https://www.bilibili.com/blackboard/html5mobileplayer.html?bvid=${props.bvid}${pageParam}&danmaku=0&playsinline=1`
-})
+// ====== DPlayer 初始化（防抖：多次触发只执行最后一次） ======
+function initPlayer() {
+  if (!props.bvid) return
+  const cid = currentCid.value
+  if (!cid) return
 
+  clearTimeout(initTimer)
+  initTimer = setTimeout(() => {
+    _doInitPlayer(cid)
+  }, 120)
+}
+
+async function _doInitPlayer(cid) {
+  if (initLock) return
+  if (!playerContainer.value) return
+
+  initLock = true
+
+  // 销毁旧实例
+  if (dp) {
+    dp.destroy()
+    dp = null
+  }
+
+  playerLoading.value = true
+
+  try {
+    const playData = await api.videoPlayurl(props.bvid, cid, 80)
+    if (!playData?.url) {
+      showToast?.('❌ 该视频暂无播放地址（可能需要登录）')
+      playerLoading.value = false
+      initLock = false
+      return
+    }
+
+    dp = new DPlayer({
+      container: playerContainer.value,
+      autoplay: true,
+      video: {
+        url: playData.url,
+        type: 'auto',
+      },
+      lang: 'zh-cn',
+    })
+
+    // === 自动播放下一集（仅开启开关时） ===
+    dp.on('ended', () => {
+      if (!autoplayNext.value) return
+      const next = nextEpisode.value
+      if (next) {
+        showToast?.(`⏭ 自动播放下一集: ${next.title}`)
+        playNext()
+      }
+    })
+
+    // === PiP 关闭时：自动回到播放页 ===
+    dp.video.addEventListener('leavepictureinpicture', () => {
+      if (router.currentRoute.value.path !== `/play/${props.bvid}`) {
+        router.push(`/play/${props.bvid}`)
+      }
+    })
+
+    // 正常播放时设置浏览器标签页标题
+    document.title = (detail.value?.title || '正在播放') + ' - BiliStudio'
+
+  } catch (e) {
+    console.error('DPlayer init failed:', e)
+    showToast?.('❌ 播放器初始化失败: ' + (e.message || '未知错误'))
+  } finally {
+    playerLoading.value = false
+    initLock = false
+  }
+}
+
+function destroyPlayer() {
+  clearTimeout(initTimer)
+  if (dp) {
+    dp.destroy()
+    dp = null
+  }
+}
+
+// ====== 工具函数 ======
 function formatNum(n) {
   if (!n) return '0'
   if (n >= 10000) return (n / 10000).toFixed(1) + '万'
@@ -169,25 +261,22 @@ function formatNum(n) {
 
 function goAuthor(mid) { if (mid) router.push(`/user/${mid}`) }
 
-// 切换合集/选集视频
+// ====== 合集/选集切换 ======
 function switchCollectionItem(v) {
   if (isMultiP.value && v.page) {
     currentPage.value = v.page
-    if (closeMiniPlayer) closeMiniPlayer()
   } else if (v.bvid && v.bvid !== props.bvid) {
     router.push(`/play/${v.bvid}`)
   }
 }
 
-// 播放下一集
 function playNext() {
   const next = nextEpisode.value
   if (!next) {
-    showToast('✅ 已是最后一集')
+    showToast?.('✅ 已是最后一集')
     return
   }
-  showToast(`▶ 下一集: ${next.title}`)
-  if (closeMiniPlayer) closeMiniPlayer()
+  showToast?.(`▶ 下一集: ${next.title}`)
 
   if (next.type === 'page') {
     currentPage.value = next.page
@@ -196,6 +285,7 @@ function playNext() {
   }
 }
 
+// ====== 数据加载 ======
 async function addToCollection(video) {
   try {
     await api.addCollection({
@@ -204,8 +294,8 @@ async function addToCollection(video) {
       duration: video.duration, description: video.description,
       play_count: video.play_count, pubdate: video.pubdate,
     })
-    isCollected.value = true; showToast('已收藏 ⭐'); loadMyCollection()
-  } catch (e) { showToast(e.message) }
+    isCollected.value = true; showToast?.('已收藏 ⭐'); loadMyCollection()
+  } catch (e) { showToast?.(e.message) }
 }
 
 async function loadDetail(skipCollection = false) {
@@ -221,7 +311,7 @@ async function loadDetail(skipCollection = false) {
     }
     const col = await api.listCollection({ keyword: props.bvid })
     isCollected.value = col.total > 0
-  } catch (e) { showToast(e.message) }
+  } catch (e) { showToast?.(e.message) }
   finally { loading.value = false }
 }
 
@@ -232,30 +322,51 @@ async function loadMyCollection() {
   } catch (e) {}
 }
 
+// ====== 生命周期 ======
 onMounted(() => {
-  loadDetail(); loadMyCollection()
+  loadDetail()
+  loadMyCollection()
 })
 
-// 离开播放页（被 keep-alive 隐藏）时自动进入迷你播放器
+onBeforeUnmount(() => {
+  destroyPlayer()
+  document.title = 'BiliStudio'
+})
+
+// keep-alive: 离开页面 — 浏览器原生画中画（不重新加载视频）
 onDeactivated(() => {
-  if (detail.value && props.bvid && openMiniPlayer) {
-    openMiniPlayer(props.bvid, detail.value.title)
+  // 必须先设标题，PiP 窗口创建时读取 document.title
+  document.title = (detail.value?.title || '正在播放') + ' - BiliStudio'
+  if (dp?.video && document.pictureInPictureEnabled) {
+    dp.video.requestPictureInPicture()
+      .then(() => dp.play())   // 防止浏览器默认暂停
+      .catch(() => {})
   }
 })
 
-// 回到播放页时关闭迷你播放器，iframe 回到全屏
+// 回来时退出 PiP，恢复全屏播放
 onActivated(() => {
-  if (closeMiniPlayer) closeMiniPlayer()
+  if (document.pictureInPictureElement) {
+    document.exitPictureInPicture().catch(() => {})
+  }
+  document.title = (detail.value?.title || '正在播放') + ' - BiliStudio'
+  if (dp) dp.play()
 })
 
-// 切换视频（点击侧边栏其他视频或路由切换 BVID）时关闭小窗，新视频全屏播放
+// 切换视频（路由 bvid 变化）
 watch(() => props.bvid, (newBvid, oldBvid) => {
   if (newBvid && newBvid !== oldBvid) {
     currentPage.value = 1
-    if (closeMiniPlayer) closeMiniPlayer()
     const inCollection = collection.value?.videos?.some(v => v.bvid === newBvid)
     loadDetail(inCollection)
     loadMyCollection()
+  }
+})
+
+// 多P切换：cid 变了就重建播放器
+watch(currentCid, (newCid, oldCid) => {
+  if (newCid && newCid !== oldCid) {
+    nextTick(() => initPlayer())
   }
 })
 </script>
@@ -274,20 +385,33 @@ watch(() => props.bvid, (newBvid, oldBvid) => {
 }
 .right h3 { font-size: 16px; font-weight: 700; margin-bottom: 14px; color: #2C3E50; }
 
+/* === 播放器容器 === */
 .player-wrap {
-  position: relative; width: 100%; padding-top: 56.25%;
+  position: relative; width: 100%;
   background: #000; border-radius: 14px; overflow: hidden;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  min-height: 360px;  /* 宽屏下的 16:9 兜底 */
 }
-.player-wrap iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* 没有播放器时撑开 16:9 */
+.player-wrap.player-empty {
+  aspect-ratio: 16 / 9;
+}
+.dplayer-container { width: 100%; }
 
-.teleport-placeholder {
+/* DPlayer 内部会设置自己的高度，覆盖保持 16:9 */
+.player-wrap :deep(.dplayer) {
+  border-radius: 14px; overflow: hidden;
+}
+
+.player-overlay {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  background: #1a1a2e; color: rgba(255,255,255,0.6);
-  font-size: 14px; border-radius: 14px;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.85); color: rgba(255,255,255,0.8);
+  font-size: 14px; z-index: 10; border-radius: 14px;
 }
 
+/* === 视频信息 === */
 .video-info { margin-top: 20px; background: #fff; border-radius: 14px; padding: 20px 24px; border: 1px solid #F1F5F9; }
 .video-title { font-size: 20px; font-weight: 700; line-height: 1.4; margin-bottom: 12px; color: #2C3E50; }
 .video-meta {
@@ -302,6 +426,7 @@ watch(() => props.bvid, (newBvid, oldBvid) => {
 .video-meta .author:hover { background: #FFE0B2; }
 .video-desc { font-size: 14px; color: #64748B; line-height: 1.7; margin-bottom: 18px; white-space: pre-wrap; }
 .video-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
 .btn {
   padding: 10px 22px; border-radius: 10px; border: none;
   font-size: 14px; cursor: pointer; font-weight: 600; text-decoration: none;
@@ -317,8 +442,18 @@ watch(() => props.bvid, (newBvid, oldBvid) => {
   box-shadow: 0 2px 8px rgba(74,144,226,0.25);
 }
 .btn-next:hover { box-shadow: 0 4px 14px rgba(74,144,226,0.4); }
+.btn-autoplay {
+  background: #F1F5F9; color: #64748B; border: 1.5px solid #E2E8F0;
+}
+.btn-autoplay:hover { border-color: #CBD5E1; }
+.btn-autoplay.active {
+  background: linear-gradient(135deg, #059669, #10B981); color: #fff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(5,150,105,0.25);
+}
+.btn-autoplay.active:hover { box-shadow: 0 4px 14px rgba(5,150,105,0.4); }
+.autoplay-icon { font-size: 16px; }
 
-/* 最后一集提示 */
 .end-panel {
   margin-top: 16px; padding: 14px 18px;
   background: linear-gradient(135deg, #F0FDF4, #DCFCE7);
@@ -327,7 +462,7 @@ watch(() => props.bvid, (newBvid, oldBvid) => {
 }
 .end-tip { font-size: 13px; color: #16A34A; font-weight: 600; }
 
-/* 侧边栏 */
+/* === 侧边栏 === */
 .side-list { display: flex; flex-direction: column; gap: 8px; }
 .side-item {
   display: flex; gap: 10px; cursor: pointer;
@@ -355,7 +490,7 @@ watch(() => props.bvid, (newBvid, oldBvid) => {
 .side-author { font-size: 12px; color: #94A3B8; }
 .side-empty { font-size: 13px; color: #CBD5E1; text-align: center; padding: 30px 0; }
 
-/* 合集列表 */
+/* === 合集列表 === */
 .collection-block {
   margin-bottom: 22px; padding-bottom: 18px;
   border-bottom: 1px dashed #E2E8F0;

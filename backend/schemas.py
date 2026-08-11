@@ -42,6 +42,7 @@ class BiliCollectionItem(BaseModel):
     pubdate: Optional[str] = None
     section_title: Optional[str] = None  # 所属分节名（如 正片/花絮）
     page: Optional[int] = None  # 分P视频的分页号（多P视频使用）
+    cid: Optional[int] = None  # 分P视频的cid（用于请求播放地址）
 
 
 class BiliCollection(BaseModel):

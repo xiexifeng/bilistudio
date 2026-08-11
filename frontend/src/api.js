@@ -107,6 +107,7 @@ export const api = {
   // ===================== B站搜索 & 视频 =====================
   search: (keyword, page = 1) => request(`/bilibili/search?keyword=${encodeURIComponent(keyword)}&page=${page}`),
   videoDetail: (bvid) => request(`/bilibili/video/${bvid}`),
+  videoPlayurl: (bvid, cid, qn = 80) => request(`/bilibili/video/${bvid}/playurl?cid=${cid}&qn=${qn}`),
   videoCollection: (bvid) => request(`/bilibili/video/${bvid}/collection`),
   userInfo: (mid) => request(`/bilibili/user/${mid}`),
   userVideos: (mid, page = 1, source = 'default') => request(`/bilibili/user/${mid}/videos?page=${page}&source=${source}`),

@@ -668,7 +668,7 @@ def _get_user_videos_wbi(mid: int, page: int = 1, ps: int = 30) -> BiliUserVideo
 # ===================== 搜索 =====================
 
 def search_videos(keyword: str, page: int = 1) -> BiliSearchResult:
-    """搜索视频（WBI 签名 + 浏览器指纹）"""
+    """搜索视频（WBI 签名 + 浏览器指纹，风控时自动回退无签名接口）"""
     params = _sign_with_dm({
         "search_type": "video", "keyword": keyword, "page": page, "pagesize": 20,
         "web_location": "333.1387",
@@ -685,7 +685,16 @@ def search_videos(keyword: str, page: int = 1) -> BiliSearchResult:
             {"search_type": "video", "keyword": keyword, "page": page, "pagesize": 20},
             ttl=settings.bili_search_cache_ttl,
         )
-    result = data["data"]
+    result = data.get("data", {})
+    # B站 WBI 搜索被风控时返回 v_voucher 而非 result，需回退 legacy 接口
+    if "v_voucher" in result and "result" not in result:
+        logger.warning("WBI search 返回 v_voucher（风控），回退 legacy")
+        data = _cached_request(
+            "https://api.bilibili.com/x/web-interface/search/type",
+            {"search_type": "video", "keyword": keyword, "page": page, "pagesize": 20},
+            ttl=settings.bili_search_cache_ttl,
+        )
+        result = data.get("data", {})
     videos_raw = result.get("result", [])
     videos: List[BiliVideoItem] = []
     for item in videos_raw:
@@ -748,6 +757,7 @@ def _build_collection_from_view(info: dict, bvid: str) -> Optional[BiliCollectio
                 pic=video_pic,
                 duration=_format_duration(p.get("duration", 0)),
                 page=p.get("page", 1),
+                cid=p.get("cid"),
             ))
         return BiliCollection(
             season_id=0,
@@ -1099,6 +1109,50 @@ def get_history(page: int = 1, ps: int = 20) -> dict:
             play_count=item.get("stat", {}).get("view"),
         ).model_dump())
     return {"videos": videos, "total": data["data"].get("page", {}).get("total", 0), "page": page}
+
+
+# ===================== 播放地址（自建播放器用） =====================
+
+def get_playurl(bvid: str, cid: int, qn: int = 80) -> dict:
+    """获取视频播放直链地址（WBI 签名 + dm_* 指纹）
+
+    返回可直接用于 <video> 或 DPlayer 的 MP4/FLV URL，
+    流量直接走 B站 CDN，不经过本后端。
+
+    Args:
+        bvid: BV号
+        cid:  分P的 cid
+        qn:   清晰度，默认 80（1080P），未登录可能降级
+
+    Returns:
+        {url, quality, format, timelength, accept_quality, accept_description}
+    """
+    params = _sign_wbi({
+        "bvid": bvid,
+        "cid": cid,
+        "qn": qn,
+        "fnval": 1,          # FLV/MP4 单文件（不用 DASH，最省事）
+        "fnver": 0,
+        "fourk": 1,
+        "platform": "html5",
+        "web_location": "1315877",
+    })
+
+    data = _cached_request(
+        "https://api.bilibili.com/x/player/wbi/playurl",
+        params, ttl=30,       # 短 TTL：CDN URL 有时效
+    )
+    result = data["data"]
+    durl = result.get("durl", [])
+
+    return {
+        "url": durl[0]["url"] if durl else None,
+        "quality": result.get("quality"),
+        "format": result.get("format"),
+        "timelength": result.get("timelength"),
+        "accept_quality": result.get("accept_quality", []),
+        "accept_description": result.get("accept_description", []),
+    }
 
 
 # ====== 启动预加载 ======

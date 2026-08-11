@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from utils.bili_api import (
     search_videos, get_video_detail, get_user_info, get_user_videos,
     get_followings, get_favorites, get_favorite_content, get_history,
-    get_video_collection,
+    get_video_collection, get_playurl,
 )
 from schemas import BiliSearchResult, BiliVideoDetail, BiliUserInfo, BiliUserVideos
 import requests
@@ -42,6 +42,15 @@ def video_collection(bvid: str):
         if col is None:
             return {"collection": None}
         return {"collection": col.model_dump()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/video/{bvid}/playurl")
+def video_playurl(bvid: str, cid: int = Query(...), qn: int = Query(80, ge=16, le=127)):
+    """获取视频播放直链地址（WBI 签名，流量走 B站 CDN，不经过本后端）"""
+    try:
+        return get_playurl(bvid, cid, qn)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

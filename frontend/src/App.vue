@@ -93,20 +93,6 @@
       </div>
     </div>
 
-    <!-- 浮动迷你播放器（画中画） -->
-    <div v-if="miniPlayer.visible" class="mini-player" :class="{collapsed: miniPlayer.collapsed}">
-      <div class="mini-header" @click="expandMini">
-        <span class="mini-title" :title="miniPlayer.title">{{ miniPlayer.title }}</span>
-        <div class="mini-actions">
-          <button class="mini-btn" @click.stop="toggleCollapse" :title="miniPlayer.collapsed ? '展开' : '收起'">
-            {{ miniPlayer.collapsed ? '▲' : '▼' }}
-          </button>
-          <button class="mini-btn close" @click.stop="closeMiniPlayer" title="关闭">✕</button>
-        </div>
-      </div>
-      <div v-show="!miniPlayer.collapsed" class="mini-body" id="mini-player-teleport"></div>
-    </div>
-
     <!-- 重命名弹窗 -->
     <div v-if="renameUser" class="modal-overlay" @click="renameUser=null">
       <div class="modal" @click.stop>
@@ -125,7 +111,7 @@
 </template>
 
 <script setup>
-import { ref, provide, onMounted, computed } from 'vue'
+import { ref, provide, onMounted, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, proxyImage, getUserId } from './api.js'
 import QRCode from 'qrcode'
@@ -234,42 +220,6 @@ async function confirmDeleteUser(user) {
 provide('currentUserId', currentUserId)
 provide('dataVersion', dataVersion)
 
-// ====== 浮动迷你播放器状态 ======
-const miniPlayer = ref({
-  visible: false,
-  collapsed: false,
-  bvid: '',
-  title: '',
-})
-
-function openMiniPlayer(bvid, title) {
-  if (!bvid) return
-  miniPlayer.value = {
-    visible: true,
-    collapsed: false,
-    bvid,
-    title: title || '正在播放',
-  }
-}
-
-function closeMiniPlayer() {
-  miniPlayer.value.visible = false
-  miniPlayer.value.bvid = ''
-}
-
-function toggleCollapse() {
-  miniPlayer.value.collapsed = !miniPlayer.value.collapsed
-}
-
-function expandMini() {
-  if (miniPlayer.value.collapsed) {
-    miniPlayer.value.collapsed = false
-  } else {
-    // 点击标题栏非按钮区域，回到大播放器
-    router.push(`/play/${miniPlayer.value.bvid}`)
-  }
-}
-
 const qrLoading = ref(false)
 const qrDataUrl = ref('')
 const qrStatus = ref('')
@@ -373,9 +323,6 @@ function showToast(msg) {
 
 provide('showToast', showToast)
 provide('biliUser', biliUser)
-provide('openMiniPlayer', openMiniPlayer)
-provide('closeMiniPlayer', closeMiniPlayer)
-provide('miniPlayerState', miniPlayer)
 </script>
 
 <style>
@@ -606,100 +553,4 @@ body {
 }
 .toast.show { opacity: 1; }
 
-/* ====== 浮动迷你播放器（画中画） ====== */
-.mini-player {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  width: 360px;
-  background: #fff;
-  border-radius: 14px;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
-  z-index: 150;
-  overflow: hidden;
-  border: 1px solid rgba(0,0,0,0.08);
-  animation: miniSlideIn 0.3s ease-out;
-  transition: all 0.3s ease;
-}
-@keyframes miniSlideIn {
-  from { transform: translateY(30px) scale(0.95); opacity: 0; }
-  to   { transform: translateY(0) scale(1); opacity: 1; }
-}
-
-.mini-player.collapsed {
-  width: 280px;
-}
-
-.mini-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  background: linear-gradient(135deg, #2C3E50, #34495E);
-  cursor: pointer;
-  user-select: none;
-}
-.mini-title {
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  margin-right: 8px;
-}
-.mini-actions {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.mini-btn {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  border: none;
-  background: rgba(255,255,255,0.15);
-  color: #fff;
-  font-size: 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s;
-}
-.mini-btn:hover {
-  background: rgba(255,255,255,0.3);
-}
-.mini-btn.close:hover {
-  background: #EF4444;
-}
-
-.mini-body {
-  position: relative;
-  width: 100%;
-  padding-top: 56.25%;
-  background: #000;
-  border-radius: 0 0 14px 14px;
-  overflow: hidden;
-}
-/* Teleport 过来的 iframe */
-.mini-body :deep(iframe) {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: none;
-}
-
-@media (max-width: 600px) {
-  .mini-player {
-    width: 260px;
-    right: 10px;
-    bottom: 10px;
-  }
-  .mini-player.collapsed {
-    width: 220px;
-  }
-}
 </style>
