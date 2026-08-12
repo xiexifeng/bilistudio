@@ -667,35 +667,82 @@ def _get_user_videos_wbi(mid: int, page: int = 1, ps: int = 30) -> BiliUserVideo
 
 # ===================== 搜索 =====================
 
+def _search_lightweight(keyword: str, page: int) -> dict:
+    """轻量搜索请求：不走带登录 cookie 的 session，避免 412 风控。
+    匿名请求 legacy 接口，B站不触发登录态异常检测。
+    412 偶发时自动重试 2 次。"""
+    url = "https://api.bilibili.com/x/web-interface/search/type"
+    params = {"search_type": "video", "keyword": keyword, "page": page, "pagesize": 20}
+    headers = {
+        "User-Agent": _random_ua(),
+        "Referer": "https://www.bilibili.com/",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    last_err = None
+    for attempt in range(3):
+        if _USE_CURL_CFFI:
+            s = _http.Session(impersonate="chrome120")
+        else:
+            s = _http.Session()
+        s.headers.update(headers)
+        try:
+            resp = s.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("code") == 0:
+                logger.info(f"B站API ✓ search/light  keyword={keyword} page={page} ({attempt+1}次尝试)")
+                return data
+            logger.warning(f"B站API ⚠ search/light code={data.get('code')} msg={data.get('message')}")
+            return data
+        except Exception as e:
+            last_err = e
+            status = getattr(getattr(e, 'response', None), 'status_code', '?')
+            logger.warning(f"B站API ⚠ search/light {status} attempt={attempt+1} ({e})")
+            if attempt < 2:
+                time.sleep(0.5 + attempt * 0.5)
+    raise RuntimeError(f"搜索请求失败: {last_err}")
+
+
 def search_videos(keyword: str, page: int = 1) -> BiliSearchResult:
-    """搜索视频（WBI 签名 + 浏览器指纹，风控时自动回退无签名接口）"""
-    params = _sign_with_dm({
-        "search_type": "video", "keyword": keyword, "page": page, "pagesize": 20,
-        "web_location": "333.1387",
-    })
+    """搜索视频（匿名轻量请求 legacy 接口，无 WBI 签名、无 v_voucher 风控、缓存可命中）"""
+    # 缓存检查
+    cache_key = _cache_key(
+        "https://api.bilibili.com/x/web-interface/search/type",
+        {"search_type": "video", "keyword": keyword, "page": page, "pagesize": 20},
+    )
+    now = time.time()
+    if cache_key in _cache:
+        ts, data = _cache[cache_key]
+        if now - ts < settings.bili_search_cache_ttl:
+            if not (isinstance(data, dict) and data.get("_cooldown")):
+                result = data.get("data", {})
+                videos_raw = result.get("result", [])
+                return _build_search_result(videos_raw, result, page)
+
+    # 轻量请求（不走登录 session）
+    _throttle("https://api.bilibili.com/x/web-interface/search/type")
     try:
-        data = _cached_request(
-            "https://api.bilibili.com/x/web-interface/wbi/search/type",
-            params, ttl=settings.bili_search_cache_ttl,
-        )
+        data = _search_lightweight(keyword, page)
+        _cache[cache_key] = (now, data)
+        result = data.get("data", {})
+        videos_raw = result.get("result", [])
+        return _build_search_result(videos_raw, result, page)
     except RuntimeError:
-        logger.warning("WBI search 失败，回退 legacy")
-        data = _cached_request(
-            "https://api.bilibili.com/x/web-interface/search/type",
-            {"search_type": "video", "keyword": keyword, "page": page, "pagesize": 20},
-            ttl=settings.bili_search_cache_ttl,
-        )
-    result = data.get("data", {})
-    # B站 WBI 搜索被风控时返回 v_voucher 而非 result，需回退 legacy 接口
-    if "v_voucher" in result and "result" not in result:
-        logger.warning("WBI search 返回 v_voucher（风控），回退 legacy")
+        # 轻量请求全部失败，回退到带 session 的 legacy 请求
+        logger.warning("搜索轻量请求失败，回退 session 请求")
         data = _cached_request(
             "https://api.bilibili.com/x/web-interface/search/type",
             {"search_type": "video", "keyword": keyword, "page": page, "pagesize": 20},
             ttl=settings.bili_search_cache_ttl,
         )
         result = data.get("data", {})
-    videos_raw = result.get("result", [])
+        videos_raw = result.get("result", [])
+        return _build_search_result(videos_raw, result, page)
+
+
+def _build_search_result(videos_raw: list, result: dict, page: int) -> "BiliSearchResult":
+    """从搜索结果原始数据构建 BiliSearchResult"""
     videos: List[BiliVideoItem] = []
     for item in videos_raw:
         if _is_ad(item):
