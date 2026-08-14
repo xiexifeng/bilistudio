@@ -1166,6 +1166,9 @@ def get_playurl(bvid: str, cid: int, qn: int = 80) -> dict:
     返回可直接用于 <video> 或 DPlayer 的 MP4/FLV URL，
     流量直接走 B站 CDN，不经过本后端。
 
+    缓存策略：使用稳定的业务参数 (bvid+cid+qn) 做 key，
+    绕过 WBI 签名中 wts/w_rid 每次变化导致的默认缓存不命中问题。
+
     Args:
         bvid: BV号
         cid:  分P的 cid
@@ -1174,6 +1177,14 @@ def get_playurl(bvid: str, cid: int, qn: int = 80) -> dict:
     Returns:
         {url, quality, format, timelength, accept_quality, accept_description}
     """
+    # 稳定缓存 key：不含 wts/w_rid 等签名参数
+    cache_key = f"playurl:{bvid}:{cid}:{qn}"
+    now = time.time()
+    if cache_key in _cache:
+        ts, data = _cache[cache_key]
+        if now - ts < 3600:           # 1h：CDN URL expire 通常数小时
+            return data
+
     params = _sign_wbi({
         "bvid": bvid,
         "cid": cid,
@@ -1185,14 +1196,14 @@ def get_playurl(bvid: str, cid: int, qn: int = 80) -> dict:
         "web_location": "1315877",
     })
 
-    data = _cached_request(
+    data = _request(
         "https://api.bilibili.com/x/player/wbi/playurl",
-        params, ttl=3600,     # 1h：CDN URL expire 通常数小时
+        params, timeout=15,
     )
     result = data["data"]
     durl = result.get("durl", [])
 
-    return {
+    rv = {
         "url": durl[0]["url"] if durl else None,
         "quality": result.get("quality"),
         "format": result.get("format"),
@@ -1200,6 +1211,8 @@ def get_playurl(bvid: str, cid: int, qn: int = 80) -> dict:
         "accept_quality": result.get("accept_quality", []),
         "accept_description": result.get("accept_description", []),
     }
+    _cache[cache_key] = (now, rv)
+    return rv
 
 
 # ====== 启动预加载 ======

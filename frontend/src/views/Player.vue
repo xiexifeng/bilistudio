@@ -241,13 +241,6 @@ async function _doInitPlayer(cid) {
       }, 1500)
     })
 
-    // === PiP 关闭时：自动回到播放页 ===
-    dp.video.addEventListener('leavepictureinpicture', () => {
-      if (router.currentRoute.value.path !== `/play/${props.bvid}`) {
-        router.push(`/play/${props.bvid}`)
-      }
-    })
-
     // 正常播放时设置浏览器标签页标题
     document.title = (detail.value?.title || '正在播放') + ' - BiliStudio'
 
@@ -349,22 +342,13 @@ onBeforeUnmount(() => {
   document.title = 'BiliStudio'
 })
 
-// keep-alive: 离开页面 — 浏览器原生画中画（不重新加载视频）
+// keep-alive: 离开页面 — 暂停播放（不再自动进入小窗，避免原生 PiP 的尺寸/关闭问题）
 onDeactivated(() => {
-  // 必须先设标题，PiP 窗口创建时读取 document.title
-  document.title = (detail.value?.title || '正在播放') + ' - BiliStudio'
-  if (dp?.video && document.pictureInPictureEnabled) {
-    dp.video.requestPictureInPicture()
-      .then(() => dp.play())   // 防止浏览器默认暂停
-      .catch(() => {})
-  }
+  if (dp) dp.pause()
 })
 
-// 回来时退出 PiP，恢复全屏播放
+// keep-alive: 回到页面 — 继续播放
 onActivated(() => {
-  if (document.pictureInPictureElement) {
-    document.exitPictureInPicture().catch(() => {})
-  }
   document.title = (detail.value?.title || '正在播放') + ' - BiliStudio'
   if (dp) dp.play()
 })
@@ -401,22 +385,30 @@ watch(currentCid, (newCid, oldCid) => {
 }
 .right h3 { font-size: 16px; font-weight: 700; margin-bottom: 14px; color: #2C3E50; }
 
-/* === 播放器容器 === */
+/* === 播放器容器：固定 16:9 宽高比，不随视频源尺寸变化 === */
 .player-wrap {
   position: relative; width: 100%;
+  aspect-ratio: 16 / 9;          /* 锁死宽高比 */
   background: #000; border-radius: 14px; overflow: hidden;
   box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-  min-height: 360px;  /* 宽屏下的 16:9 兜底 */
 }
-/* 没有播放器时撑开 16:9 */
-.player-wrap.player-empty {
-  aspect-ratio: 16 / 9;
+/* 没有播放器时也保持 16:9（已通过上面 aspect-ratio 锁死） */
+.dplayer-container {
+  position: absolute; inset: 0;  /* 撑满父容器 */
+  width: 100%; height: 100%;
 }
-.dplayer-container { width: 100%; }
 
-/* DPlayer 内部会设置自己的高度，覆盖保持 16:9 */
+/* DPlayer 内部样式：保持 16:9，视频源如果是 9:16/4:3 居中显示（不拉伸） */
 .player-wrap :deep(.dplayer) {
   border-radius: 14px; overflow: hidden;
+  width: 100% !important; height: 100% !important;
+}
+.player-wrap :deep(.dplayer-video-wrap) {
+  width: 100% !important; height: 100% !important;
+}
+.player-wrap :deep(.dplayer-video) {
+  object-fit: contain;            /* 视频源非 16:9 时居中留黑边，不拉伸 */
+  width: 100% !important; height: 100% !important;
 }
 
 .player-overlay {

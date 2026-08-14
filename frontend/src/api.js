@@ -5,12 +5,12 @@ function getUserId() {
   return parseInt(localStorage.getItem('bilistudio_user_id') || '1', 10)
 }
 
-// ====== playurl 内存缓存：key=bvid_cid，避免切回已播放视频时重复请求 API ======
+// ====== playurl 内存缓存：key=bvid_cid_qn，避免切回已播放视频时重复请求 API ======
 const playurlCache = new Map()
 
 // 导出清除方法（视频加载失败时调用，仅清除单个 key）
-export function clearPlayurlCache(bvid, cid) {
-  playurlCache.delete(`${bvid}_${cid}`)
+export function clearPlayurlCache(bvid, cid, qn = 80) {
+  playurlCache.delete(`${bvid}_${cid}_${qn}`)
 }
 // 用户切换时清空全部缓存
 export function clearAllPlayurlCache() {
@@ -120,7 +120,7 @@ export const api = {
   search: (keyword, page = 1) => request(`/bilibili/search?keyword=${encodeURIComponent(keyword)}&page=${page}`),
   videoDetail: (bvid) => request(`/bilibili/video/${bvid}`),
   videoPlayurl: (bvid, cid, qn = 80) => {
-    const key = `${bvid}_${cid}`
+    const key = `${bvid}_${cid}_${qn}`
     if (playurlCache.has(key)) {
       return Promise.resolve(playurlCache.get(key))
     }

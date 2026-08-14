@@ -88,15 +88,46 @@
 
       <div v-if="totalPages > 1" class="pagination">
         <button :disabled="page <= 1" @click="changePage(page-1)">‹ 上一页</button>
-        <span class="page-info">{{ page }} / {{ totalPages }}</span>
+        <button
+          v-for="(item, idx) in pageNumbers"
+          :key="idx"
+          class="page-num"
+          :class="{ active: item === page, ellipsis: item === '...' }"
+          :disabled="item === '...'"
+          @click="changePage(item)"
+        >{{ item }}</button>
         <button :disabled="page >= totalPages" @click="changePage(page+1)">下一页 ›</button>
       </div>
     </div>
   </div>
 </template>
 
+<script>
+// 搜索结果前端缓存（模块级）：key=`${query}_${page}`，组件重新创建或页面刷新后仍然保留
+// 保留 5 分钟，自动按 LRU 限制最多 50 条
+const _searchCache = new Map()
+const _SEARCH_CACHE_TTL = 5 * 60 * 1000
+const _SEARCH_CACHE_MAX = 50
+function _getCachedSearch(q, p) {
+  const item = _searchCache.get(`${q}_${p}`)
+  if (!item) return null
+  if (Date.now() - item.ts > _SEARCH_CACHE_TTL) {
+    _searchCache.delete(`${q}_${p}`)
+    return null
+  }
+  return item
+}
+function _setCachedSearch(q, p, videos, total) {
+  if (_searchCache.size >= _SEARCH_CACHE_MAX) {
+    const firstKey = _searchCache.keys().next().value
+    _searchCache.delete(firstKey)
+  }
+  _searchCache.set(`${q}_${p}`, { videos, total, ts: Date.now() })
+}
+</script>
+
 <script setup>
-import { ref, computed, watch, onMounted, inject } from 'vue'
+import { ref, computed, watch, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api.js'
 import { curatedUpers, searchCategories } from '../curated.js'
@@ -116,6 +147,25 @@ const error = ref('')
 const hasSearched = ref(false)
 
 const totalPages = computed(() => Math.ceil(total.value / pageSize))
+
+// 快捷页码：首末页 + 当前页前后 2 页 + 省略号
+const pageNumbers = computed(() => {
+  const total = totalPages.value
+  const cur = page.value
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1)
+  }
+  const result = []
+  const add = (n) => result.push(n)
+  const left = Math.max(2, cur - 2)
+  const right = Math.min(total - 1, cur + 2)
+  add(1)
+  if (left > 2) add('...')
+  for (let i = left; i <= right; i++) add(i)
+  if (right < total - 1) add('...')
+  add(total)
+  return result
+})
 
 let searchDebounce = null
 
@@ -160,13 +210,26 @@ async function addToCollection(video) {
 
 async function doSearch() {
   if (!query.value.trim()) return
+  const q = query.value
+  const p = page.value
+  // 1. 优先查前端缓存：命中则直接展示，零延迟
+  const cached = _getCachedSearch(q, p)
+  if (cached) {
+    videos.value = cached.videos
+    total.value = cached.total
+    hasSearched.value = true
+    loading.value = false
+    error.value = ''
+    return
+  }
   loading.value = true
   error.value = ''
   hasSearched.value = true
   try {
-    const res = await api.search(query.value, page.value)
+    const res = await api.search(q, p)
     videos.value = res.videos
     total.value = res.total
+    _setCachedSearch(q, p, res.videos, res.total)
   } catch (e) {
     error.value = e.message
   } finally {
@@ -183,12 +246,19 @@ function changePage(p) {
 watch(() => route.query.q, (q) => {
   clearTimeout(searchDebounce)
   if (q) {
+    // 从播放页返回时：关键词没变且已有结果，直接复用 keep-alive 状态
+    if (q === query.value && hasSearched.value && videos.value.length > 0) return
     query.value = q
     page.value = 1
     searchDebounce = setTimeout(doSearch, 500)
   } else {
+    // 仅当还停在首页（用户主动清除搜索/点logo回首页）时才清空。
+    // 若已导航到播放页等其他页面（route.path 已变化），Home 被 keep-alive 缓存，
+    // 此时 query 清空是导航副作用，必须保留页码和结果，否则返回时会回到第 1 页
+    if (route.path !== '/') return
     hasSearched.value = false
     videos.value = []
+    page.value = 1
   }
 }, { immediate: true })
 </script>
@@ -315,15 +385,23 @@ watch(() => route.query.q, (q) => {
 
 .pagination {
   display: flex; align-items: center; justify-content: center;
-  gap: 16px; margin-top: 32px;
+  gap: 6px; margin-top: 32px; flex-wrap: wrap;
 }
 .pagination button {
-  padding: 10px 22px; border: 1px solid #E2E8F0;
-  background: #fff; border-radius: 10px; cursor: pointer;
-  font-size: 14px; font-weight: 500; color: #64748B;
-  transition: all .15s; font-family: inherit;
+  padding: 8px 14px; border: 1px solid #E2E8F0;
+  background: #fff; border-radius: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: #64748B;
+  transition: all .15s; font-family: inherit; min-width: 36px;
 }
 .pagination button:hover:not(:disabled) { border-color: #FF6B35; color: #FF6B35; }
 .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+.pagination button.page-num.active {
+  background: #FF6B35; color: #fff; border-color: #FF6B35;
+}
+.pagination button.page-num.ellipsis {
+  border: none; background: transparent; cursor: default; color: #94A3B8;
+  padding: 8px 4px; min-width: 0;
+}
+.pagination button.page-num.ellipsis:hover { color: #94A3B8; }
 .page-info { font-size: 14px; color: #64748B; font-weight: 500; }
 </style>

@@ -57,7 +57,7 @@
     <!-- 路由视图 -->
     <main class="main">
       <router-view v-slot="{ Component }">
-        <keep-alive :include="['Player']">
+        <keep-alive :include="['Player', 'Home']">
           <component :is="Component" />
         </keep-alive>
       </router-view>

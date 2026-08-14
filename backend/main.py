@@ -144,7 +144,7 @@ def update_rate_config(cfg: RateConfig):
     """调整 B站 API 频率限制参数（重启后重置为配置文件默认值）"""
     settings.bili_min_interval = max(0.5, min(cfg.bili_min_interval, 10.0))
     settings.bili_retry_count = max(1, min(cfg.bili_retry_count, 5))
-    settings.bili_search_cache_ttl = max(10, min(cfg.bili_search_cache_ttl, 300))
+    settings.bili_search_cache_ttl = max(10, min(cfg.bili_search_cache_ttl, 1800))  # 上限 30 分钟
     return {
         "msg": "已更新",
         "bili_min_interval": settings.bili_min_interval,

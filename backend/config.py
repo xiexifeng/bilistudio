@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # B站 API 频率控制
     bili_min_interval: float = 5.0      # 两次请求最小间隔（秒），默认5秒 + 抖动
     bili_retry_count: int = 3            # -799 自动重试次数
-    bili_search_cache_ttl: int = 60      # 搜索缓存秒数
+    bili_search_cache_ttl: int = 300     # 搜索缓存秒数（5 分钟，搜索结果页内反复切页可命中）
     bili_video_list_cache_ttl: int = 600 # UP主视频列表缓存秒数（10分钟，视频列表变化慢）
 
     class Config:
